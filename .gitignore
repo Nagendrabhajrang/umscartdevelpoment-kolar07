@@ -1,0 +1,89 @@
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.hypothesis/
+
+# ============================================================================
+# SECRETS - never commit these
+# ============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.json
+
+# ============================================================================
+# Django runtime artefacts
+# ============================================================================
+*.log
+logs/
+db.sqlite3
+db.sqlite3-journal
+/backend/staticfiles/
+/backend/media/
+/backend/mediafiles/
+
+# Local overrides
+local_settings.py
+settings_local.py
+
+# ============================================================================
+# Deployment / OS
+# ============================================================================
+*.pid
+*.sock
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Backup archives produced by deployment/scripts/backup.sh
+/backups/
+*.dump
+*.sql.gz

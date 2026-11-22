@@ -1,0 +1,54 @@
+# =============================================================================
+# UMS Mart - Python dependencies
+#
+# Pinned versions are the ones the automated test suite (326 tests) and the
+# 117-check end-to-end smoke suite were executed against.
+#
+#   pip install -r requirements.txt
+#
+# Python 3.11+ is required (developed and verified on CPython 3.13).
+# =============================================================================
+
+# --- Web framework -----------------------------------------------------------
+Django==5.2.19
+djangorestframework==3.16.1
+
+# --- API documentation -------------------------------------------------------
+drf-spectacular==0.28.0
+
+# --- Filtering / pagination --------------------------------------------------
+django-filter==26.2
+
+# --- Cross-origin requests for the future front-ends -------------------------
+django-cors-headers==4.9.0
+
+# --- PostgreSQL driver (psycopg 3) -------------------------------------------
+psycopg==3.2.13
+# Binary wheel: avoids needing libpq-dev + a compiler on the Hostinger VPS.
+psycopg-binary==3.2.13
+
+# --- Configuration -----------------------------------------------------------
+python-dotenv==1.2.4
+
+# --- Outbound HTTP (email + SMS delivery) ------------------------------------
+# Used directly by apps/notifications/services/{email_service,sms_service}.py to
+# POST to the mail relay and GET the SMS gateway. It was missing from this file
+# until round 32: the sandbox had it installed as a transitive dependency, so
+# `manage.py` ran there while a clean `pip install -r requirements.txt` raised
+# ModuleNotFoundError on this import. Do not remove.
+requests==2.33.0
+
+# --- Password hashing (Argon2) ----------------------------------------------
+# PASSWORD_HASHERS in config/settings/base.py puts Argon2PasswordHasher FIRST,
+# so this is not an optional extra: without it every admin login, password
+# reset and `create_admin` raises ModuleNotFoundError for 'argon2'.
+argon2-cffi==25.1.0
+
+# --- Image handling (product images, payment proof, banners) -----------------
+pillow==13.0.0
+
+# --- Production application server -------------------------------------------
+gunicorn==26.2.0
+
+# --- Static file serving -----------------------------------------------------
+whitenoise==6.12.0

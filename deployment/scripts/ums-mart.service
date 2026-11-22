@@ -1,0 +1,73 @@
+# =============================================================================
+# systemd unit - UMS Mart API (Gunicorn)
+#
+# Install:
+#   sudo cp deployment/scripts/ums-mart.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ums-mart
+#   sudo systemctl status ums-mart
+#
+# Logs:
+#   journalctl -u ums-mart -f
+# =============================================================================
+
+[Unit]
+Description=UMS Mart API (Gunicorn + Django)
+Documentation=https://github.com/your-org/ums-mart
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User=umsmart
+Group=www-data
+
+# --- Working directory and environment -------------------------------------
+WorkingDirectory=/home/ums_mart/backend
+Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+
+# Every secret and tunable lives in this file (mode 0640, owned by umsmart).
+# Django does not auto-load .env, so settings/*.py read it via python-dotenv.
+EnvironmentFile=-/home/ums_mart/backend/.env
+
+# --- Process ----------------------------------------------------------------
+# `gunicorn` must be on PATH for the umsmart user: either the venv is
+# activated in an ExecStartPre, or you point at the absolute path below.
+ExecStart=/home/ums_mart/venv/bin/gunicorn \
+    config.wsgi:application \
+    --config /home/ums_mart/deployment/gunicorn/gunicorn.conf.py
+
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+# Runtime directory holds the UNIX socket; systemd recreates it after reboot.
+RuntimeDirectory=gunicorn
+RuntimeDirectoryMode=0755
+UMask=0007
+
+# --- Hardening --------------------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Writable paths the app legitimately needs.
+ReadWritePaths=/home/ums_mart/backend/media /home/ums_mart/backend/logs /run/gunicorn
+
+# --- Resource limits --------------------------------------------------------
+LimitNOFILE=65535
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

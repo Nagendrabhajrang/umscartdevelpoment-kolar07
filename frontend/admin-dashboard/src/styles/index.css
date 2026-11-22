@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-100 text-slate-900 antialiased;
+  }
+  /* Grid and flex items default to `min-width: auto`, which means a wide child
+     (a table with a min-width, a long unbreakable string) drags the whole page
+     wider instead of scrolling inside its own card. Every admin page is built
+     from grids, so allow the columns to shrink below their content width. */
+  .grid > *,
+  .flex > * {
+    min-width: 0;
+  }
+  :focus-visible {
+    outline: 2px solid theme("colors.brand.600");
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-card;
+  }
+  .page-title {
+    @apply text-xl font-bold tracking-tight text-slate-900 sm:text-2xl;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar counter bubble                                              */
+/* ------------------------------------------------------------------ */
+/* A CSS "pop" instead of a JS spring: it always ends at scale(1), so the  */
+/* badge can never be left rendered at a fraction of its intended size.    */
+@keyframes sidebar-badge-pop {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.sidebar-badge {
+  animation: sidebar-badge-pop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  /* keep the glyph optically centred inside the circle */
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-badge { animation: none; }
+}

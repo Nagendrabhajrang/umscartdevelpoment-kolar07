@@ -1,0 +1,14 @@
+{{ store_name }} verification code
+
+Your {{ purpose_label }} code is:
+
+    {{ code }}
+
+This code expires in {{ validity_minutes }} minutes and can be used once.
+
+If you did not request this code, someone may have typed your address by
+mistake - you can safely ignore this email. Your account has not been changed.
+
+--
+{{ store_name }}
+This is an automated message; replies are not monitored.

@@ -1,0 +1,26 @@
+name: ums_mart_customer
+description: UMS Mart - customer shopping app for Android and web.
+publish_to: "none"
+version: 2.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/pics/p/
+    - assets/pics/c/
+    - assets/pics/b/

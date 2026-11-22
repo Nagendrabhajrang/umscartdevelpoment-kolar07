@@ -1,0 +1,10 @@
+"""App configuration for the Addresses module."""
+
+from django.apps import AppConfig
+
+
+class AddressesConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.addresses"
+    label = "addresses"
+    verbose_name = "Addresses"
