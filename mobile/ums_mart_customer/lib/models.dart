@@ -237,8 +237,6 @@ class Order {
 
   static const List<String> steps = [
     'pending',
-    'confirmed',
-    'processing',
     'packed',
     'out_for_delivery',
     'delivered',
@@ -246,8 +244,6 @@ class Order {
 
   static const Map<String, String> labels = {
     'pending': 'Order placed',
-    'confirmed': 'Confirmed',
-    'processing': 'Being prepared',
     'packed': 'Packed',
     'out_for_delivery': 'Out for delivery',
     'delivered': 'Delivered',

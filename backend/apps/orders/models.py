@@ -28,8 +28,6 @@ ZERO = Decimal("0.00")
 
 class OrderStatus(models.TextChoices):
     PENDING = "pending", "Pending"
-    CONFIRMED = "confirmed", "Confirmed"
-    PROCESSING = "processing", "Processing"
     PACKED = "packed", "Packed"
     OUT_FOR_DELIVERY = "out_for_delivery", "Out for delivery"
     DELIVERED = "delivered", "Delivered"
@@ -71,14 +69,6 @@ class CancellationReason(models.TextChoices):
 #: Legal order status transitions.
 ALLOWED_TRANSITIONS = {
     OrderStatus.PENDING: {
-        OrderStatus.CONFIRMED,
-        OrderStatus.CANCELLED,
-    },
-    OrderStatus.CONFIRMED: {
-        OrderStatus.PROCESSING,
-        OrderStatus.CANCELLED,
-    },
-    OrderStatus.PROCESSING: {
         OrderStatus.PACKED,
         OrderStatus.CANCELLED,
     },
@@ -103,16 +93,12 @@ ALLOWED_TRANSITIONS = {
 #: Statuses that still hold a claim on inventory.
 ACTIVE_ORDER_STATUSES = (
     OrderStatus.PENDING,
-    OrderStatus.CONFIRMED,
-    OrderStatus.PROCESSING,
     OrderStatus.PACKED,
     OrderStatus.OUT_FOR_DELIVERY,
 )
 
 #: Statuses that count as realised revenue.
 REVENUE_ORDER_STATUSES = (
-    OrderStatus.CONFIRMED,
-    OrderStatus.PROCESSING,
     OrderStatus.PACKED,
     OrderStatus.OUT_FOR_DELIVERY,
     OrderStatus.DELIVERED,
@@ -255,9 +241,7 @@ class Order(BaseModel):
     @property
     def is_final(self) -> bool:
         return self.status in {
-            OrderStatus.DELIVERED,
             OrderStatus.CANCELLED,
-            OrderStatus.RETURNED,
             OrderStatus.REFUNDED,
         }
 

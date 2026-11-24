@@ -448,15 +448,6 @@ class OrderViewSet(BaseModelViewSet):
 
     @extend_schema(
         request=None, responses={200: OrderDetailSerializer},
-        description="Confirm a pending order (admin action).",
-    )
-    @action(detail=True, methods=["post"], url_path="confirm")
-    def confirm(self, request, pk=None):
-        order = services.confirm_order(self.get_object(), changed_by="admin")
-        return Response(OrderDetailSerializer(order, context={"request": request}).data)
-
-    @extend_schema(
-        request=None, responses={200: OrderDetailSerializer},
         description="Mark an out-for-delivery order as delivered.",
     )
     @action(detail=True, methods=["post"], url_path="mark-delivered")

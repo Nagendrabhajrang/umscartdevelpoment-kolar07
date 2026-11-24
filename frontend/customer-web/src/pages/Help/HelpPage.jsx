@@ -16,11 +16,11 @@ const FAQ = [
   },
   {
     q: "How long does delivery take?",
-    a: "Most orders arrive within 45 minutes. You can follow every step from My orders — pending, confirmed, processing, out for delivery, delivered.",
+    a: "Most orders arrive within 45 minutes. You can follow every step from My orders — pending, packed, out for delivery, delivered.",
   },
   {
     q: "Can I cancel an order?",
-    a: "Yes, until it goes out for delivery. Open the order and choose Cancel order. Once a rider has left the store, cancellation is no longer possible — just refuse the delivery.",
+    a: "Yes, until it is delivered. Open the order and choose Cancel order.",
   },
   {
     q: "What if an item is missing or damaged?",

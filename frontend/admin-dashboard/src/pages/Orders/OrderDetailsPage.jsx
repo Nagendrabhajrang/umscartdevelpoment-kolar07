@@ -68,13 +68,8 @@ export default function OrderDetailsPage() {
   const quickAction = async (action) => {
     setSaving(true);
     try {
-      if (action === "confirm") {
-        await orderService.confirm(id);
-        notify.success("Order confirmed");
-      } else {
-        await orderService.markDelivered(id);
-        notify.success("Order marked delivered");
-      }
+      await orderService.markDelivered(id);
+      notify.success("Order marked delivered");
       await load();
       bumpDataVersion();
     } catch (e) {
@@ -106,7 +101,7 @@ export default function OrderDetailsPage() {
   const rawNext = order.next_statuses || [];
   const isPaidNow = ["paid", "cod_collected"].includes(order.payment_status);
   const next = rawNext.filter((st) => st !== "delivered" || isPaidNow);
-  const isFinal = ["delivered", "cancelled", "returned", "refunded"].includes(order.status);
+  const isFinal = ["cancelled", "refunded"].includes(order.status);
 
   // Business rule: a product can only be marked delivered once it is paid for.
   // For cash on delivery that means the cash has been recorded; a UPI order
@@ -122,7 +117,7 @@ export default function OrderDetailsPage() {
   const awaitingCash = isOutForDelivery && !isPaid;
   // "Change status" is withheld at the delivery window so the flow cannot be
   // side-stepped; everywhere else it stays as before.
-  const showChangeStatus = !isFinal && !isOutForDelivery;
+  const showChangeStatus = !isFinal && next.length > 0;
 
   // `from` makes the return trip survive a refresh of the payments page.
   const paymentLink = order.payment_id
@@ -143,11 +138,6 @@ export default function OrderDetailsPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <Button variant="outline" size="sm" onClick={load} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>Refresh</Button>
-          {next.includes("confirmed") && (
-            <Button variant="success" size="sm" loading={saving} onClick={() => quickAction("confirm")} leftIcon={<CheckCircle2 className="h-3.5 w-3.5" />}>
-              Confirm order
-            </Button>
-          )}
           {/* Cash outstanding -> the one action is a link into Payments. */}
           {awaitingCash && (
             <Link

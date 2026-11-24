@@ -110,7 +110,7 @@ export default function CustomerDetailsPage() {
   const deliveredOrders = orders.filter((o) => o.status === "delivered");
   const cancelledOrders = orders.filter((o) => o.status === "cancelled");
   const inFlight = orders.filter((o) =>
-    ["pending", "confirmed", "processing", "packed", "out_for_delivery"].includes(o.status));
+    ["pending", "packed", "out_for_delivery"].includes(o.status));
   const unpaidOrders = orders.filter((o) => !o.is_paid && o.status !== "cancelled");
   const refusedOrders = orders.filter((o) => ["returned", "refunded"].includes(o.status));
   const totalPaid = payments

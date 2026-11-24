@@ -365,10 +365,7 @@ def update_order_status(order: Order, new_status: str, *, note: str = "",
 
     now = timezone.now()
     update_fields = ["status", "updated_at"]
-    if new_status == OrderStatus.CONFIRMED:
-        locked.confirmed_at = now
-        update_fields.append("confirmed_at")
-    elif new_status == OrderStatus.DELIVERED:
+    if new_status == OrderStatus.DELIVERED:
         locked.delivered_at = now
         update_fields.append("delivered_at")
         # Payment is settled separately by the payments service (the admin
@@ -443,12 +440,12 @@ def cancel_order(order: Order, *, reason: str = "customer_request",
         )
     if locked.status not in {
         OrderStatus.PENDING,
-        OrderStatus.CONFIRMED,
-        OrderStatus.PROCESSING,
+        OrderStatus.PACKED,
+        OrderStatus.OUT_FOR_DELIVERY,
     }:
         raise BusinessRuleError(
             message=(
-                "Only pending, confirmed or processing orders can be cancelled. "
+                "Only pending, packed or out-for-delivery orders can be cancelled. "
                 "Contact support for delivered orders."
             ),
             code="order_not_cancellable",
@@ -477,11 +474,6 @@ def cancel_order(order: Order, *, reason: str = "customer_request",
         ):
             setattr(order, field, getattr(updated, field))
     return updated
-
-
-@transaction.atomic
-def confirm_order(order: Order, *, changed_by: str = "admin", note: str = "") -> Order:
-    return update_order_status(order, OrderStatus.CONFIRMED, note=note, changed_by=changed_by)
 
 
 @transaction.atomic

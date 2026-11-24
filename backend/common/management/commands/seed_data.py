@@ -124,11 +124,11 @@ class Command(BaseCommand):
         plan = {
             customers[0]: [("delivered", 6), ("out_for_delivery", 1)],
             customers[1]: [("delivered", 3), ("cancelled", 1)],
-            customers[2]: [("delivered", 2), ("processing", 1)],
+            customers[2]: [("delivered", 2), ("packed", 1)],
             customers[3]: [("delivered", 1), ("pending", 1)],
         }
         walk = [
-            OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.PACKED,
+            OrderStatus.PACKED,
             OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED,
         ]
         created = 0
@@ -152,9 +152,8 @@ class Command(BaseCommand):
 
                     payment = order.payments.first()
                     if final_status == "cancelled":
+                        update_order_status(order, OrderStatus.CANCELLED, changed_by="seed_data")
                         continue
-
-                    steps = walk[:walk.index(final_status) + 1] if final_status in walk else []
 
                     steps = walk[:walk.index(final_status) + 1] if final_status in walk else []
                     for status in steps:
