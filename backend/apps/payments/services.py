@@ -36,13 +36,17 @@ def create_payment_for_order(order: Order) -> Payment:
 
     Called by the checkout service inside its own transaction.
     """
-    # Cash on delivery is the only method in this build.
-    status_value = PaymentStatus.PENDING
+    # COD starts as cash-due; a UPI payment starts out awaiting proof, because
+    # the customer has to scan the store QR and submit a reference first.
+    is_upi = order.payment_method == PaymentMethod.UPI
+    status_value = (
+        PaymentStatus.AWAITING_VERIFICATION if is_upi else PaymentStatus.PENDING
+    )
 
     payment = Payment.objects.create(
         order=order,
         customer_id=order.customer_id,
-        payment_method=PaymentMethod.COD,
+        payment_method=order.payment_method,
         payment_status=status_value,
         amount=round_money(order.grand_total),
         currency=order.currency,
@@ -52,7 +56,11 @@ def create_payment_for_order(order: Order) -> Payment:
         action=VerificationAction.SUBMITTED,
         from_status="",
         to_status=status_value,
-        remarks="Payment record created at checkout",
+        remarks=(
+            "UPI payment created at checkout - awaiting customer reference"
+            if is_upi
+            else "Payment record created at checkout"
+        ),
         performed_by="system",
     )
     logger.info(
@@ -63,41 +71,241 @@ def create_payment_for_order(order: Order) -> Payment:
 
 
 # ---------------------------------------------------------------------------
-# UPI (removed)
+# UPI flow
 # ---------------------------------------------------------------------------
-# UPI was dropped from this build: every payment is cash on delivery. The
-# model keeps transaction_id / upi_id so a future UPI phase can be re-enabled
-# without another migration. These stubs keep the call sites honest instead of
-# silently doing nothing.
+UPI_SETTINGS_HELP = (
+    "The store has not configured UPI yet. An admin must add a UPI ID and QR "
+    "image in the admin console under Settings."
+)
+
+
 def get_upi_details(payment: Payment) -> dict:
-    raise BusinessRuleError(
-        message="UPI payments are not enabled. This store is cash on delivery only.",
-        code="upi_not_enabled",
-    )
+    """Everything the customer needs on screen to pay this order by UPI.
+
+    Returns the store's UPI ID, payee name and QR image URL plus the amount to
+    pay, the order number to use as the transaction note, and the current
+    payment status so the storefront knows whether to keep showing the
+    "I have paid" form.
+    """
+    from apps.store_settings.models import StoreSettings
+
+    if payment.payment_method != PaymentMethod.UPI:
+        raise BusinessRuleError(
+            message="This payment is cash on delivery; there is no UPI step.",
+            code="not_a_upi_payment",
+        )
+
+    store = StoreSettings.load()
+    return {
+        "payment": payment.id,
+        "payment_number": payment.payment_number,
+        "order_number": payment.order.order_number,
+        "amount": str(payment.amount),
+        "currency": payment.currency,
+        "payment_status": payment.payment_status,
+        "upi_id": store.upi_id or "",
+        "upi_payee_name": store.upi_payee_name or store.store_name,
+        "upi_qr_image_url": (
+            store.upi_qr_image.url if store.upi_qr_image else None
+        ),
+        "transaction_note": payment.order.order_number,
+        "is_configured": bool(store.upi_id),
+        "help": "" if store.upi_id else UPI_SETTINGS_HELP,
+        "rejection_reason": payment.rejection_reason or "",
+        "transaction_id": payment.transaction_id or "",
+        "can_submit": payment.payment_status
+        in {
+            PaymentStatus.AWAITING_VERIFICATION,
+            PaymentStatus.PENDING,
+            PaymentStatus.REJECTED,
+        },
+    }
 
 
+@transaction.atomic
 def submit_payment_proof(payment: Payment, *, transaction_reference: str,
                          proof=None, payer_name: str = "",
-                         payer_upi_id: str = "", notes: str = "") -> Payment:
-    raise BusinessRuleError(
-        message="UPI payments are not enabled. This store is cash on delivery only.",
-        code="upi_not_enabled",
+                         payer_upi_id: str = "", payer_mobile: str = "",
+                         notes: str = "") -> Payment:
+    """Customer says "I paid": store the UPI reference and move to pending.
+
+    Allowed from awaiting_verification (first submission), rejected (retry after
+    an admin said the money never arrived) and pending (re-submission of a
+    clearer screenshot). Anything already settled is a conflict.
+    """
+    locked = (
+        Payment.objects.select_for_update().select_related("order").get(pk=payment.pk)
     )
 
+    if locked.payment_method != PaymentMethod.UPI:
+        raise BusinessRuleError(
+            message="Proof submission only applies to UPI payments.",
+            code="not_a_upi_payment",
+        )
+    if locked.payment_status in {
+        PaymentStatus.PAID, PaymentStatus.VERIFIED, PaymentStatus.COLLECTED,
+        PaymentStatus.REFUNDED, PaymentStatus.APPROVED,
+    }:
+        raise ConflictError(
+            message="This payment is already settled, so no proof is needed.",
+            code="payment_already_settled",
+        )
 
+    reference = (transaction_reference or "").strip()
+    if len(reference) < 6:
+        raise BusinessRuleError(
+            message="Enter the complete UPI transaction reference (at least 6 characters).",
+            code="invalid_transaction_reference",
+        )
+
+    previous = locked.payment_status
+    already_submitted = previous in {PaymentStatus.PENDING, PaymentStatus.REJECTED}
+
+    locked.transaction_id = reference
+    if payer_name:
+        locked.payer_name = payer_name[:150]
+    if payer_upi_id:
+        locked.upi_id = payer_upi_id[:120]
+    if payer_mobile:
+        locked.mobile_number = payer_mobile[:20]
+    if notes:
+        locked.notes = (locked.notes + "\n" if locked.notes else "") + notes[:1000]
+    if proof is not None:
+        locked.payment_proof = proof
+        locked.payment_proof_uploaded_at = timezone.now()
+    locked.payment_status = PaymentStatus.PENDING
+    locked.rejection_reason = ""
+    locked.verification_attempts = (locked.verification_attempts or 0) + 1
+    locked.save()
+
+    order = locked.order
+    order.payment_status = OrderPaymentStatus.PENDING_VERIFICATION
+    order.save(update_fields=["payment_status", "updated_at"])
+
+    PaymentVerification.objects.create(
+        payment=locked,
+        action=(
+            VerificationAction.RESUBMITTED if already_submitted
+            else VerificationAction.SUBMITTED
+        ),
+        from_status=previous,
+        to_status=locked.payment_status,
+        transaction_reference=reference,
+        proof_file=proof if proof is not None else None,
+        remarks=notes or "Customer submitted a UPI transaction reference",
+        performed_by=f"customer:{locked.customer_id}",
+    )
+
+    logger.info(
+        "UPI proof submitted payment=%s ref=%s", locked.payment_number, reference
+    )
+    return locked
+
+
+@transaction.atomic
 def approve_payment(payment: Payment, *, verified_by: str, remarks: str = "") -> Payment:
-    raise BusinessRuleError(
-        message="Manual payment approval is not used for cash on delivery. "
-                "Record the cash with /cod-collected/ instead.",
-        code="upi_not_enabled",
+    """Admin confirms the money landed: payment paid, order paid."""
+    locked = (
+        Payment.objects.select_for_update().select_related("order").get(pk=payment.pk)
     )
 
+    if locked.payment_method != PaymentMethod.UPI:
+        raise BusinessRuleError(
+            message=(
+                "Manual approval is only for UPI payments. Record cash with "
+                "/cod-collected/ instead."
+            ),
+            code="not_a_upi_payment",
+        )
+    if locked.payment_status in {PaymentStatus.PAID, PaymentStatus.APPROVED,
+                                 PaymentStatus.VERIFIED, PaymentStatus.COLLECTED}:
+        raise ConflictError(
+            message="This payment is already approved.",
+            code="payment_already_approved",
+        )
+    if locked.payment_status in {PaymentStatus.REFUNDED, PaymentStatus.CANCELLED}:
+        raise BusinessRuleError(
+            message="A refunded or cancelled payment cannot be approved.",
+            code="payment_not_approvable",
+        )
+    if not locked.transaction_id:
+        raise BusinessRuleError(
+            message=(
+                "The customer has not submitted a UPI reference yet, so there is "
+                "nothing to verify."
+            ),
+            code="missing_transaction_reference",
+        )
 
+    previous = locked.payment_status
+    now = timezone.now()
+    locked.payment_status = PaymentStatus.PAID
+    locked.paid_at = now
+    locked.verified_by = (verified_by or "admin")[:150]
+    locked.verified_at = now
+    locked.rejection_reason = ""
+    locked.save()
+
+    order = locked.order
+    order.payment_status = OrderPaymentStatus.PAID
+    order.save(update_fields=["payment_status", "updated_at"])
+
+    PaymentVerification.objects.create(
+        payment=locked,
+        action=VerificationAction.APPROVED,
+        from_status=previous,
+        to_status=locked.payment_status,
+        transaction_reference=locked.transaction_id,
+        remarks=remarks or "UPI payment verified against the bank statement",
+        performed_by=locked.verified_by,
+    )
+
+    logger.info("UPI payment approved %s by=%s", locked.payment_number, locked.verified_by)
+    return locked
+
+
+@transaction.atomic
 def reject_payment(payment: Payment, *, reason: str, verified_by: str) -> Payment:
-    raise BusinessRuleError(
-        message="Rejecting a payment only applies to UPI, which is not enabled.",
-        code="upi_not_enabled",
+    """Admin says the money did not arrive: back to the customer, with a reason."""
+    locked = (
+        Payment.objects.select_for_update().select_related("order").get(pk=payment.pk)
     )
+
+    if locked.payment_method != PaymentMethod.UPI:
+        raise BusinessRuleError(
+            message="Rejecting a payment only applies to UPI payments.",
+            code="not_a_upi_payment",
+        )
+    if locked.payment_status in {PaymentStatus.PAID, PaymentStatus.APPROVED,
+                                 PaymentStatus.VERIFIED, PaymentStatus.COLLECTED}:
+        raise ConflictError(
+            message="This payment is already approved and cannot be rejected.",
+            code="payment_already_approved",
+        )
+
+    previous = locked.payment_status
+    locked.payment_status = PaymentStatus.REJECTED
+    locked.rejection_reason = (reason or "")[:255]
+    locked.verified_by = (verified_by or "admin")[:150]
+    locked.verified_at = timezone.now()
+    locked.save()
+
+    order = locked.order
+    order.payment_status = OrderPaymentStatus.UNPAID
+    order.save(update_fields=["payment_status", "updated_at"])
+
+    PaymentVerification.objects.create(
+        payment=locked,
+        action=VerificationAction.REJECTED,
+        from_status=previous,
+        to_status=locked.payment_status,
+        transaction_reference=locked.transaction_id,
+        remarks=locked.rejection_reason,
+        performed_by=locked.verified_by,
+    )
+
+    logger.info("UPI payment rejected %s reason=%s", locked.payment_number, reason)
+    return locked
 
 
 # ---------------------------------------------------------------------------

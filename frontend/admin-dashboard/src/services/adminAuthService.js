@@ -25,6 +25,32 @@ const CSRF_COOKIE = "ums_mart_csrftoken";
 const CSRF_HEADER = "X-CSRFToken";
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+/*
+ * Cookie-blocked fallback.
+ *
+ * In a cross-site frame (the hosted preview) the browser can refuse the session
+ * cookie, and then every request arrives anonymous. The API answers the login
+ * with a `session_token` in the body when AUTH_BEARER_FALLBACK is on, and it is
+ * replayed as `Authorization: Bearer`. Off by default on the server, so a normal
+ * deployment still carries its credential in the HttpOnly cookie only.
+ */
+const BEARER_KEY = "ums.admin.bearer";
+let memoryBearer = null;
+
+export function storeSessionToken(token) {
+  memoryBearer = token || null;
+  write(BEARER_KEY, token || null);
+}
+
+export function getSessionToken() {
+  return memoryBearer ?? read(BEARER_KEY);
+}
+
+export function clearSessionToken() {
+  memoryBearer = null;
+  write(BEARER_KEY, null);
+}
+
 /* ------------------------------------------------------------------ */
 /* Storage                                                            */
 /* ------------------------------------------------------------------ */
@@ -62,6 +88,8 @@ export function storeAdminSession({ user } = {}) {
 
 export function clearAdminSession() {
   write(USER_KEY, null);
+  write(BEARER_KEY, null);
+  memoryBearer = null;
   purgeLegacyStorage();
 }
 
@@ -112,6 +140,28 @@ export function ensureCsrf() {
   return csrfReady;
 }
 
+/**
+ * Throw the CSRF token away and ask for a new one.
+ *
+ * Used by the response interceptor when the API answers `csrf_failed`: a stale
+ * token is retried once with a fresh one instead of showing the operator
+ * "your security token expired" and making them refresh the page.
+ */
+export async function refreshCsrf() {
+  csrfReady = null;
+  try {
+    document.cookie = `${CSRF_COOKIE}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  } catch {
+    /* storage blocked - nothing to drop */
+  }
+  await fetch(`${AUTH_BASE}/auth/csrf/`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  }).catch(() => null);
+  return getCookie(CSRF_COOKIE);
+}
+
 /* ------------------------------------------------------------------ */
 /* Errors                                                             */
 /* ------------------------------------------------------------------ */
@@ -155,9 +205,15 @@ async function parseError(response) {
 /* ------------------------------------------------------------------ */
 
 async function request(path, { method = "POST", body } = {}) {
-  const headers = { "Content-Type": "application/json" };
+  // Same tag as the axios instance: the login, MFA, session and logout calls are
+  // the ones that create or destroy the admin session cookie, so they must say
+  // which client they belong to or they would touch the shopper's session.
+  const headers = { "Content-Type": "application/json", "X-Client": "admin" };
 
-  if (UNSAFE.has(method)) {
+  const bearer = getSessionToken();
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+  if (UNSAFE.has(method) && !bearer) {
     if (!getCookie(CSRF_COOKIE)) await ensureCsrf();
     const token = getCookie(CSRF_COOKIE);
     if (token) headers[CSRF_HEADER] = token;
@@ -203,7 +259,12 @@ export const adminAuthService = {
    * Step 2: the emailed code. This is the only call that opens an admin session,
    * and the HttpOnly cookie is set on its response.
    */
-  verifyMfa: (code) => request("/admin/verify-mfa/", { body: { code } }),
+  verifyMfa: async (code) => {
+    clearSessionToken();
+    const data = await request("/admin/verify-mfa/", { body: { code } });
+    if (data?.session_token) storeSessionToken(data.session_token);
+    return data;
+  },
 
   resendMfaOtp: (username) =>
     request("/admin/resend-mfa-otp/", { body: { username } }),

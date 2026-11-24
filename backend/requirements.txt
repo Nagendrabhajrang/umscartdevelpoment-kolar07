@@ -38,6 +38,12 @@ python-dotenv==1.2.4
 # ModuleNotFoundError on this import. Do not remove.
 requests==2.33.0
 
+# --- UPI QR generation --------------------------------------------------------
+# Pure-python QR encoder. seed_data uses it to render a scannable UPI QR for the
+# demo store (and `manage.py generate_upi_qr` does the same on demand), so the
+# storefront has a real code to show even before an admin uploads their own PNG.
+segno==1.6.6
+
 # --- Password hashing (Argon2) ----------------------------------------------
 # PASSWORD_HASHERS in config/settings/base.py puts Argon2PasswordHasher FIRST,
 # so this is not an optional extra: without it every admin login, password

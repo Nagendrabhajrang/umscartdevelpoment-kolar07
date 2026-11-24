@@ -14,8 +14,10 @@ below converts them into a single, predictable error envelope:
 """
 
 import logging
+import re
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from django.http import Http404
@@ -173,6 +175,9 @@ def ums_mart_exception_handler(exc, context):
 
     detail = response.data
     status_code = response.status_code
+    # Filled in only where a more precise explanation exists (currently the CSRF
+    # branch); every other case keeps the historical empty `details`.
+    details = None
 
     if isinstance(exc, DRFValidationError):
         code = "validation_error"
@@ -192,12 +197,75 @@ def ums_mart_exception_handler(exc, context):
             csrf_detail = str(detail.get("detail") or "")
         elif isinstance(detail, (list, tuple)) and detail:
             csrf_detail = str(detail[0])
+        elif isinstance(detail, str):
+            # DRF's own CSRF guard sends {"detail": ...}, but a bare string reaches
+            # here from other call sites - treat it the same instead of decaying
+            # into a generic "no permission" message.
+            csrf_detail = str(detail)
         if "CSRF" in csrf_detail.upper():
             code = "csrf_failed"
-            message = (
-                "Your security token expired, so this change was not saved. "
-                "Refresh the page and try again."
-            )
+            # Round 38: one sentence covered three very different failures, so a
+            # misconfigured host sent people refreshing the page forever. DRF puts
+            # the real cause in the detail text - surface it.
+            lowered = csrf_detail.lower()
+            if "origin" in lowered:
+                csrf_reason = "origin_mismatch"
+                # DRF says which origin it rejected: "Origin checking failed -
+                # http://localhost:5175 does not match any trusted origins."
+                # Naming it (and the list we do trust) turns a guessing game into
+                # a one-line fix, especially when a dev server lands on a port
+                # nobody expected.
+                match = re.search(r"https?://[^\s'\"()]+", csrf_detail)
+                origin = match.group(0).rstrip(".,)") if match else ""
+                trusted = list(getattr(settings, "CSRF_TRUSTED_ORIGINS", []) or [])
+                where = f" ({origin})" if origin else ""
+                message = (
+                    f"This page's address{where} is not in the API's list of "
+                    "trusted origins, so the change was rejected. Add it to "
+                    "CSRF_TRUSTED_ORIGINS in backend/.env and restart the API."
+                )
+                if trusted:
+                    shown = ", ".join(trusted[:6])
+                    if len(trusted) > 6:
+                        shown += f", ... ({len(trusted)} total)"
+                    message += f" Trusted right now: {shown}."
+                details = {
+                    "reason": csrf_reason,
+                    "origin": origin,
+                    "trusted_origins": trusted,
+                }
+            elif "incorrect" in lowered or "mismatch" in lowered:
+                csrf_reason = "token_mismatch"
+                message = (
+                    "Your security token was out of date, so the change was not "
+                    "saved. It has been refreshed - please try that once more."
+                )
+            elif "referer" in lowered:
+                csrf_reason = "referer_missing"
+                message = (
+                    "This browser hid the address the change came from (no "
+                    "Referer header), so the API could not verify the request. "
+                    "Turn off strict referrer blocking for this site, or open the "
+                    "store over http://localhost instead of a LAN IP or HTTPS tunnel."
+                )
+            elif "not set" in lowered or "missing" in lowered or "no csrf" in lowered:
+                csrf_reason = "token_missing"
+                message = (
+                    "This browser did not send the security cookie the change "
+                    "needs. Allow cookies for this site, then try again."
+                )
+            else:
+                csrf_reason = "rejected"
+                message = (
+                    "Your security token could not be verified, so this change "
+                    "was not saved. The server said: "
+                    f"{csrf_detail[:160]}"
+                )
+            details = {
+                **(details or {}),
+                "reason": csrf_reason,
+                "server_detail": csrf_detail[:200],
+            }
         else:
             message = "You do not have permission to perform this action."
     else:
@@ -206,7 +274,11 @@ def ums_mart_exception_handler(exc, context):
         message = _first_message(error_detail)
 
     # Preserve the original DRF shape inside "details" for field level errors.
-    details = detail if isinstance(exc, DRFValidationError) else None
+    # The CSRF branch above may already have filled it in with its reason.
+    if isinstance(exc, DRFValidationError):
+        details = detail
+    elif not isinstance(details, dict):
+        details = None
     response.data = _envelope(code, message, details, status_code)
     return response
 

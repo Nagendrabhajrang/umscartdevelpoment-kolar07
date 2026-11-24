@@ -84,6 +84,15 @@ def end_session(request) -> None:
     """
     if request is None:
         return
+
+    # A sign-in that came through the bearer fallback has no cookie for
+    # logout() to work with, so delete the session row the header names.
+    bearer_key = getattr(request, "_ums_bearer_session_key", "")
+    if bearer_key:
+        from django.contrib.sessions.backends.db import SessionStore
+
+        SessionStore(session_key=bearer_key).delete()
+
     django_logout(request)
 
 
@@ -182,3 +191,21 @@ def new_session_id() -> str:
         "new_session_id() is obsolete: Django now owns the session id and it is "
         "never exposed to JavaScript."
     )
+
+
+def attach_session_token(payload: dict, request) -> dict:
+    """Add ``session_token`` to a login response when the fallback is enabled.
+
+    Used only where a session is *created* (customer OTP verify, admin password +
+    MFA). When ``AUTH_BEARER_FALLBACK`` is off - i.e. everywhere except the
+    sandbox preview - this is a no-op and no credential ever leaves the cookie.
+    """
+    from django.conf import settings
+
+    if not getattr(settings, "AUTH_BEARER_FALLBACK", False):
+        return payload
+    session = getattr(request, "session", None)
+    key = getattr(session, "session_key", None)
+    if not key:
+        return payload
+    return {**payload, "session_token": key}

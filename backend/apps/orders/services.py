@@ -83,10 +83,7 @@ def checkout(*, customer, address, payment_method: str,
 
     if payment_method not in PaymentMethod.values:
         raise BusinessRuleError(
-            message=(
-                "Unsupported payment method. This store accepts cash on "
-                "delivery only."
-            ),
+            message="Unsupported payment method.",
             code="invalid_payment_method",
             details={"allowed": list(PaymentMethod.values)},
         )
@@ -99,6 +96,23 @@ def checkout(*, customer, address, payment_method: str,
             message="Cash on delivery is not available at the moment.",
             code="cod_disabled",
         )
+
+    if payment_method == PaymentMethod.UPI:
+        if not settings_obj.upi_enabled:
+            raise BusinessRuleError(
+                message="UPI payments are not available at the moment.",
+                code="upi_disabled",
+            )
+        if not settings_obj.upi_id:
+            # Without a VPA there is nothing for the customer to scan/pay, so
+            # refusing the order is kinder than an unpayable one.
+            raise BusinessRuleError(
+                message=(
+                    "UPI is enabled but the store has not set a UPI ID yet. "
+                    "Please pay cash on delivery instead."
+                ),
+                code="upi_not_configured",
+            )
 
 
     # 1. Lock the cart so concurrent checkouts cannot both proceed.
@@ -220,7 +234,11 @@ def checkout(*, customer, address, payment_method: str,
         delivery_instructions=address.delivery_instructions,
         status=OrderStatus.PENDING,
         payment_method=payment_method,
-        payment_status=PaymentStatus.COD_DUE,
+        payment_status=(
+            PaymentStatus.PENDING_VERIFICATION
+            if payment_method == PaymentMethod.UPI
+            else PaymentStatus.COD_DUE
+        ),
         subtotal=subtotal,
         mrp_total=Decimal(summary["mrp_total"]),
         product_savings=Decimal(summary["product_savings"]),
@@ -354,10 +372,24 @@ def update_order_status(order: Order, new_status: str, *, note: str = "",
     if new_status == OrderStatus.DELIVERED and locked.payment_status not in {
         PaymentStatus.PAID, PaymentStatus.COD_COLLECTED,
     }:
+        # The reason differs by method, and so does the fix: cash is recorded by
+        # the person holding it, while a UPI payment is confirmed in the Payments
+        # console. Telling a UPI order to "collect the cash" was nonsense.
+        is_upi = getattr(locked, "payment_method", "") == "upi"
         raise BusinessRuleError(
-            message="Collect the cash before marking this order delivered.",
-            code="payment_required_before_delivery",
-            details={"payment_status": locked.payment_status},
+            message=(
+                "Confirm this order's UPI payment in Payments before marking it delivered."
+                if is_upi
+                else "Collect the cash before marking this order delivered."
+            ),
+            code=(
+                "upi_payment_not_confirmed" if is_upi
+                else "payment_required_before_delivery"
+            ),
+            details={
+                "payment_status": locked.payment_status,
+                "payment_method": getattr(locked, "payment_method", ""),
+            },
         )
 
     previous = locked.status

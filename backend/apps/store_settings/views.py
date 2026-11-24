@@ -50,6 +50,50 @@ class StoreSettingsView(APIView):
         )
 
 
+class GenerateUpiQrView(APIView):
+    """Draw the store's UPI QR from the configured UPI ID.
+
+    The alternative is uploading a PNG exported from a UPI app; this endpoint
+    exists so an admin can change the UPI ID and get a matching, scannable QR
+    in one click without touching a phone.
+    """
+
+    @extend_schema(
+        request=None,
+        responses={200: StoreSettingsSerializer},
+        tags=["Store Settings"],
+        description=(
+            "Regenerate the store UPI QR image from `upi_id` (optionally baking in "
+            "a fixed amount via ?amount=). Returns the updated settings."
+        ),
+    )
+    def post(self, request):
+        settings_obj = selectors.get_store_settings()
+        amount = request.data.get("amount") or None
+        # BusinessRuleError is an APIException, so the global handler renders it
+        # as the usual {"error": {...}} envelope.
+        name = services.generate_upi_qr_image(
+            settings_obj,
+            amount=amount,
+            note=str(request.data.get("note") or ""),
+        )
+        if not name:
+            return Response(
+                {
+                    "error": {
+                        "code": "qr_unavailable",
+                        "message": "QR generation is unavailable on this server.",
+                        "status": 400,
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        settings_obj.refresh_from_db()
+        return Response(
+            StoreSettingsSerializer(settings_obj, context={"request": request}).data
+        )
+
+
 class DeliveryQuoteView(APIView):
     """Quote the delivery charge for a given cart subtotal."""
 

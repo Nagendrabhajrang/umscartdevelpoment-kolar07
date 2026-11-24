@@ -308,6 +308,16 @@ class Command(BaseCommand):
         settings_obj.is_store_open = True
         settings_obj.save()
 
+        # Draw a real, scannable UPI QR from the UPI ID above so the storefront
+        # has something to show before an admin uploads their own PNG.
+        if not settings_obj.upi_qr_image:
+            from apps.store_settings.services import generate_upi_qr_image
+
+            try:
+                generate_upi_qr_image(settings_obj)
+            except Exception as exc:  # pragma: no cover - demo convenience
+                self.stdout.write(f"  (UPI QR not generated: {exc})")
+
         slabs = [
             ("Below ₹199", 0, 198.99, 40),
             ("₹199 - ₹398", 199, 398.99, 30),

@@ -12,7 +12,11 @@ import { formatMoney } from "../../utils/format";
 const FAQ = [
   {
     q: "How do I pay for my order?",
-    a: "Cash on delivery only. Keep the exact amount ready and hand it to the delivery partner when your order arrives. You will get a confirmation the moment it is collected.",
+    a: "Two ways. Cash on delivery: keep the exact amount ready and hand it to the delivery partner when your order arrives. UPI: scan the store QR (or use its UPI ID) at checkout, then enter the UPI reference on the order page so the store can match your payment — the order is marked paid once it is verified.",
+  },
+  {
+    q: "I paid by UPI but the order still says payment review. Why?",
+    a: "The store checks every UPI reference against its bank statement. That usually takes a few minutes. If a reference cannot be matched, the order page shows the reason and lets you submit it again.",
   },
   {
     q: "How long does delivery take?",

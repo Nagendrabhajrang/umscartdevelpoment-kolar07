@@ -106,6 +106,20 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 # unsafe requests (OTP verify, add-to-cart) without a CSRF rejection.
 CSRF_TRUSTED_ORIGINS = CSRF_TRUSTED_ORIGINS + ["https://*.e2b.app"]
 
+# Django cannot express "any port on this machine" in CSRF_TRUSTED_ORIGINS, so a
+# dev server on an unexpected port (or a phone opening a LAN IP) had its unsafe
+# requests rejected as if the page were untrusted. In DEBUG the check is widened
+# to loopback and private-network origins; production is untouched. Set
+# CSRF_ALLOW_LOCAL_ORIGINS=False in .env to keep the strict behaviour while
+# developing.
+if env_bool("CSRF_ALLOW_LOCAL_ORIGINS", True):
+    MIDDLEWARE = [
+        "common.middleware.DevOriginTolerantCsrfMiddleware"
+        if entry == "django.middleware.csrf.CsrfViewMiddleware"
+        else entry
+        for entry in MIDDLEWARE
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Logging - verbose, human friendly

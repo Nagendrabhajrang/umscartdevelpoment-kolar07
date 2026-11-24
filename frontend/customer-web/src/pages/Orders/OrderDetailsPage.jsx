@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useFetch } from "../../hooks";
 import { orderService } from "../../services/orderService";
+import { paymentService } from "../../services/paymentService";
+import UpiPayBox from "../../components/payment/UpiPayBox";
 import { useNotification } from "../../context/NotificationContext";
 import { useCart } from "../../context/CartContext";
 import { OrderStatusBadge, PaymentStatusBadge } from "../../components/common/Badge";
@@ -41,6 +43,64 @@ export default function OrderDetailsPage() {
   const [reason, setReason] = useState("customer_request");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+
+  /*
+   * UPI: the order carries `payment_id`, and the payment row knows the store's
+   * QR / UPI ID / amount plus whether the customer still has to submit a
+   * reference. Loaded separately so a failure here can never break the order.
+   */
+  const isUpi = order?.payment_method === "upi";
+  const paymentId = order?.payment_id ?? null;
+  const [upi, setUpi] = useState(null);
+
+  const loadUpi = useCallback(async () => {
+    if (!isUpi || !paymentId) return;
+    try {
+      setUpi(await paymentService.upiDetails(paymentId));
+    } catch {
+      /* the order page still renders; the UPI panel just stays hidden */
+    }
+  }, [isUpi, paymentId]);
+
+  useEffect(() => {
+    loadUpi();
+  }, [loadUpi]);
+
+  // True while this order still needs something from the customer or the store:
+  // pay, resubmit, or wait for the verification to land.
+  const needsUpiAction =
+    isUpi &&
+    Boolean(upi) &&
+    !["paid", "approved", "verified", "refunded", "cancelled"].includes(
+      upi.payment_status,
+    );
+
+  /*
+   * Ask for the transaction ID exactly once per order, the first time the page is
+   * opened while the payment is still awaiting one. It is a ref, not state, so
+   * re-renders (or a rejected resubmission) never re-open the popup against the
+   * customer's wishes - the button in the UPI box is always there for that.
+   */
+  const [autoConfirm, setAutoConfirm] = useState(false);
+  const autoConfirmDoneRef = useRef(false);
+  useEffect(() => {
+    if (!paymentId || autoConfirmDoneRef.current || !upi) return;
+    /*
+     * The customer has just typed the reference on the checkout gate. Asking
+     * again on the very next screen - which this did, because the payment stays
+     * resubmittable while it is under review - reads as "that did not save".
+     * One order, one ask; the button in the UPI box is still there afterwards.
+     */
+    if (location.state?.upiSubmitted) {
+      autoConfirmDoneRef.current = true;
+      return;
+    }
+    const waiting = ["awaiting_verification", "pending", "pending_verification", "unpaid"];
+    if (upi.can_submit && waiting.includes(upi.payment_status)) {
+      autoConfirmDoneRef.current = true;
+      setAutoConfirm(true);
+    }
+  }, [paymentId, upi]);
 
   if (loading) {
     return (
@@ -225,6 +285,26 @@ export default function OrderDetailsPage() {
             </section>
           ) : null}
 
+          {/* UPI payment: the QR, the UPI ID and the "I have paid" form.
+              Full width here - the sidebar is too narrow for the form. */}
+          {needsUpiAction && upi ? (
+            <UpiPayBox
+              upiId={upi.upi_id}
+              payeeName={upi.upi_payee_name}
+              qrUrl={upi.upi_qr_image_url}
+              amount={upi.amount ?? order.grand_total}
+              note={upi.order_number || order.order_number}
+              help={upi.help}
+              paymentId={paymentId}
+              paymentStatus={upi.payment_status}
+              rejectionReason={upi.rejection_reason}
+              canSubmit={upi.can_submit}
+              showResubmit={false}
+              autoOpen={autoConfirm}
+              onSubmitted={loadUpi}
+            />
+          ) : null}
+
           {/* History */}
           {history.data?.length ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -274,7 +354,20 @@ export default function OrderDetailsPage() {
               <p className="mt-0.5 text-sm font-semibold text-slate-800">
                 {order.payment_method_display || "Cash on delivery"}
               </p>
+              {isUpi ? (
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {upi?.upi_id ? `Paid to ${upi.upi_id}` : "UPI"}
+                </p>
+              ) : null}
             </div>
+
+            {isUpi && upi && !needsUpiAction ? (
+              <p className="mt-2 rounded-lg bg-brand-50 px-2.5 py-1.5 text-[11px] font-semibold text-brand-800">
+                {["paid", "approved", "verified"].includes(upi.payment_status)
+                  ? "Paid by UPI — thank you!"
+                  : "This UPI payment is closed."}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-2">

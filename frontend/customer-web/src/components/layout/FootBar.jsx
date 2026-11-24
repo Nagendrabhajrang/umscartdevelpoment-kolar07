@@ -10,7 +10,7 @@ export default function FootBar() {
   const features = [
     { title: "45-minute delivery", text: "From our local store to your door" },
     { title: "Freshness guaranteed", text: "Or we refund the item, no questions" },
-    { title: "Secure checkout", text: "Cash on delivery" },
+    { title: "Secure checkout", text: "UPI or cash on delivery" },
   ];
 
   return (
@@ -97,7 +97,7 @@ export default function FootBar() {
           <p>
             © {year} {settings?.store_name || "UMS Mart"}. Demo store — no real orders are fulfilled.
           </p>
-          <p>Prices in {settings?.currency_code || "INR"} · Cash on delivery only</p>
+          <p>Prices in {settings?.currency_code || "INR"} · UPI and cash on delivery</p>
         </div>
       </div>
     </footer>

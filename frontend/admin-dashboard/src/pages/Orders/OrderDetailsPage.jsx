@@ -120,9 +120,15 @@ export default function OrderDetailsPage() {
   const showChangeStatus = !isFinal && next.length > 0;
 
   // `from` makes the return trip survive a refresh of the payments page.
-  const paymentLink = order.payment_id
-    ? `/payments?collect=${order.payment_id}&from=${order.id}`
-    : `/payments?from=${order.id}`;
+  //
+  // UPI and cash take different routes on purpose: cash opens the "record cash"
+  // dialog, UPI opens the verification panel.
+  const isUpiOrder = order.payment_method === "upi";
+  const paymentLink = isUpiOrder
+    ? `/payments?verify=${order.payment_id ?? ""}&from=${order.id}`
+    : order.payment_id
+      ? `/payments?collect=${order.payment_id}&from=${order.id}`
+      : `/payments?from=${order.id}`;
 
   return (
     <div className="space-y-3">
@@ -138,16 +144,40 @@ export default function OrderDetailsPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <Button variant="outline" size="sm" onClick={load} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>Refresh</Button>
-          {/* Cash outstanding -> the one action is a link into Payments. */}
+          {/* Payment outstanding -> link into the right Payments flow. */}
           {awaitingCash && (
             <Link
               to={paymentLink}
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
-              title="Open this order's payment and record the cash"
+              className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-semibold text-white shadow-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                isUpiOrder
+                  ? "bg-sky-600 hover:bg-sky-700 focus-visible:outline-sky-600"
+                  : "bg-amber-500 hover:bg-amber-600 focus-visible:outline-amber-600"
+              }`}
+              title={
+                isUpiOrder
+                  ? "Open this order's UPI payment and verify the reference"
+                  : "Open this order's payment and record the cash"
+              }
             >
               <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
-              Collect cash
+              {isUpiOrder ? "Verify UPI payment" : "Collect cash"}
             </Link>
+          )}
+          {/*
+            UPI: the delivery button exists but stays disabled until somebody
+            confirms the UPI payment in Payments. COD is unchanged - it unlocks
+            from the recorded cash exactly as before (that path is `isPaid`).
+          */}
+          {isUpiOrder && isOutForDelivery && !isPaid && (
+            <Button
+              variant="primary"
+              size="sm"
+              disabled
+              title="Confirm this order's UPI payment in Payments first - delivery unlocks after that."
+              leftIcon={<Truck className="h-3.5 w-3.5" />}
+            >
+              Mark delivered
+            </Button>
           )}
           {/* Cash in -> delivery is the one action. */}
           {isOutForDelivery && isPaid && (

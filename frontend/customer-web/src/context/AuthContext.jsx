@@ -202,8 +202,8 @@ export function AuthProvider({ children }) {
       // The OTP was right but no session was established. Keep local state and
       // the guest key exactly as they were, and tell the page to explain it.
       const err = new Error(
-        "Your browser didn't keep the sign-in cookie, so we couldn't sign you in. " +
-          "Your cart is still saved. Please allow cookies for this site and try again.",
+        "Your browser refused to keep the sign-in session, so we couldn't sign you in. " +
+          "Your cart is still saved. Please allow cookies and site data for this site and try again.",
       );
       err.code = "session_cookie_blocked";
       throw err;

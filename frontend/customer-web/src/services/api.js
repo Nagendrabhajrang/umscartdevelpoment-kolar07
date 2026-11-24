@@ -16,7 +16,13 @@
 
 import axios from "axios";
 
-import { clearSession, ensureCsrf, getCookie } from "./authService";
+import {
+  clearSession,
+  ensureCsrf,
+  getCookie,
+  getSessionToken,
+  refreshCsrf,
+} from "./authService";
 import { getGuestKey } from "./guestCart";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
@@ -84,6 +90,18 @@ api.interceptors.request.use(async (config) => {
    * `customer_context_required`.
    */
   config.headers["X-Guest-Cart"] = getGuestKey();
+
+  /*
+   * Cookie-blocked fallback.
+   *
+   * When the API could not set a session cookie (a cross-site frame, or a
+   * browser blocking third-party cookies) it returns the session key in the
+   * login response and it is replayed here. When the cookie *does* work this
+   * header is simply absent, and Django's session cookie remains the only
+   * credential.
+   */
+  const bearer = getSessionToken();
+  if (bearer) config.headers.Authorization = `Bearer ${bearer}`;
 
   // Let the browser set the multipart boundary for file uploads.
   if (config.data instanceof FormData) {
@@ -164,10 +182,37 @@ let notifying = false;
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
     const normalised = normaliseError(error);
-    const url = error?.config?.url;
+    const config = error?.config;
+    const url = config?.url;
+
+    /*
+     * Self-heal a stale CSRF token.
+     *
+     * `csrf_failed` means the server rejected the *token*, not the shopper: the
+     * cookie and the header drifted apart (rotated by a sign-in in another tab, a
+     * restored session, or a cookie the browser dropped). Telling the visitor to
+     * refresh the page is the wrong answer when the fix is mechanical, so the
+     * token is re-fetched and the request is replayed **once**. If the replay
+     * fails too, the normal error reaches the UI: by then the cookies really are
+     * blocked and no amount of retrying helps.
+     */
+    if (
+      normalised.code === "csrf_failed" &&
+      config &&
+      !config._csrfRetried &&
+      UNSAFE.has((config.method || "").toLowerCase())
+    ) {
+      config._csrfRetried = true;
+      const fresh = await refreshCsrf();
+      if (fresh) {
+        config.headers = config.headers || {};
+        config.headers[CSRF_HEADER] = fresh;
+        return api(config);
+      }
+    }
 
     /*
      * A 401 is decisive: the server confirmed there is no session. Clear the

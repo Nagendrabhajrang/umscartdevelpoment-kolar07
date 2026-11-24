@@ -81,7 +81,7 @@ class PaymentViewSet(BaseModelViewSet):
 
     @extend_schema(
         responses={400: dict},
-        description="UPI is disabled in this build - returns 400 upi_not_enabled.",
+        description="Store UPI ID, payee name, QR image and the amount due for this payment.",
     )
     @action(detail=True, methods=["get"], url_path="upi-details")
     def upi_details(self, request, pk=None):
@@ -91,7 +91,7 @@ class PaymentViewSet(BaseModelViewSet):
     @extend_schema(
         request=PaymentProofSerializer,
         responses={200: PaymentSerializer},
-        description="UPI is disabled in this build - returns 400 upi_not_enabled.",
+        description="Store UPI ID, payee name, QR image and the amount due for this payment.",
     )
     @action(
         detail=True,
@@ -110,6 +110,7 @@ class PaymentViewSet(BaseModelViewSet):
             proof=data.get("payment_proof"),
             payer_name=data.get("payer_name", ""),
             payer_upi_id=data.get("upi_id", ""),
+            payer_mobile=data.get("payer_mobile", ""),
             notes=data.get("notes", ""),
         )
         return Response(PaymentSerializer(updated, context={"request": request}).data)
@@ -117,7 +118,7 @@ class PaymentViewSet(BaseModelViewSet):
     @extend_schema(
         request=PaymentApprovalSerializer,
         responses={200: PaymentSerializer},
-        description="UPI is disabled in this build - returns 400 upi_not_enabled.",
+        description="Store UPI ID, payee name, QR image and the amount due for this payment.",
     )
     @action(detail=True, methods=["post"], url_path="approve")
     def approve(self, request, pk=None):
@@ -134,7 +135,7 @@ class PaymentViewSet(BaseModelViewSet):
     @extend_schema(
         request=PaymentRejectionSerializer,
         responses={200: PaymentSerializer},
-        description="UPI is disabled in this build - returns 400 upi_not_enabled.",
+        description="Store UPI ID, payee name, QR image and the amount due for this payment.",
     )
     @action(detail=True, methods=["post"], url_path="reject")
     def reject(self, request, pk=None):
