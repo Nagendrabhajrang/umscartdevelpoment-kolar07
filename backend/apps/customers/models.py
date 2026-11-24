@@ -101,8 +101,6 @@ class Customer(BaseModel, SoftDeleteModel):
 
         total = self.orders.filter(
             status__in=[
-                OrderStatus.CONFIRMED,
-                OrderStatus.PROCESSING,
                 OrderStatus.PACKED,
                 OrderStatus.OUT_FOR_DELIVERY,
                 OrderStatus.DELIVERED,

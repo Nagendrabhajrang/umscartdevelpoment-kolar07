@@ -37,12 +37,12 @@ const PAYMENT_METHODS = [
  */
 const STATUS_CARDS = [
   { key: "pending", label: "Pending", tone: "border-amber-200 bg-amber-50 text-amber-900", chip: "bg-amber-500" },
-  { key: "confirmed", label: "Confirmed", tone: "border-sky-200 bg-sky-50 text-sky-900", chip: "bg-sky-500" },
-  { key: "processing", label: "Processing", tone: "border-indigo-200 bg-indigo-50 text-indigo-900", chip: "bg-indigo-500" },
   { key: "packed", label: "Packed", tone: "border-teal-200 bg-teal-50 text-teal-900", chip: "bg-teal-500" },
   { key: "out_for_delivery", label: "Out for delivery", tone: "border-violet-200 bg-violet-50 text-violet-900", chip: "bg-violet-500" },
   { key: "delivered", label: "Delivered", tone: "border-emerald-200 bg-emerald-50 text-emerald-900", chip: "bg-emerald-500" },
   { key: "cancelled", label: "Cancelled", tone: "border-rose-200 bg-rose-50 text-rose-900", chip: "bg-rose-500" },
+  { key: "returned", label: "Returned", tone: "border-orange-200 bg-orange-50 text-orange-900", chip: "bg-orange-500" },
+  { key: "refunded", label: "Refunded", tone: "border-slate-200 bg-slate-50 text-slate-900", chip: "bg-slate-500" },
 ];
 
 /**
@@ -86,7 +86,6 @@ export default function OrdersPage() {
   const act = async (order, action, label) => {
     setBusyId(order.id);
     try {
-      if (action === "confirm") await orderService.confirm(order.id);
       if (action === "deliver") await orderService.markDelivered(order.id);
       if (action === "cancel") await orderService.updateStatus(order.id, "cancelled", "Cancelled from admin");
       notify.success(label);
@@ -153,7 +152,6 @@ export default function OrdersPage() {
       align: "right",
       render: (row) => {
         const next = row.next_statuses || [];
-        const canConfirm = next.includes("confirmed");
         // Delivery is only offered once the money is in: cash recorded for COD,
         // payment_status=paid otherwise. When unpaid the action is HIDDEN, not
         // disabled — a greyed-out icon still takes up space in the row and reads
@@ -164,14 +162,6 @@ export default function OrdersPage() {
         const busy = busyId === row.id;
         return (
           <div className="flex items-center justify-end gap-1">
-            {canConfirm && (
-              <button type="button" disabled={busy} onClick={() => act(row, "confirm", `${row.order_number} confirmed`)}
-                title="Confirm order"
-                className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
-                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                <span className="sr-only">Confirm {row.order_number}</span>
-              </button>
-            )}
             {/* At the delivery window it is one or the other, never both:
                 cash outstanding -> a Collect cash link into Payments;
                 cash recorded    -> Mark delivered. */}

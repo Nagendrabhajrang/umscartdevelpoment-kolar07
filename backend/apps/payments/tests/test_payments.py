@@ -105,7 +105,7 @@ class CodPaymentTests(TestCase):
     def test_delivering_a_cod_order_settles_the_payment(self):
         """Cash-first: collect at the door, THEN record the delivery."""
         order = self._make_order()
-        for step in ("confirmed", "processing", "packed", "out_for_delivery"):
+        for step in ("packed", "out_for_delivery"):
             update_order_status(order, step, changed_by="admin")
 
         mark_cod_collected(Payment.objects.get(order=order), collected_by="admin")
@@ -118,7 +118,7 @@ class CodPaymentTests(TestCase):
     def test_cannot_deliver_an_unpaid_cod_order(self):
         """The delivery endpoint must refuse while the cash is still pending."""
         order = self._make_order()
-        for step in ("confirmed", "processing", "packed", "out_for_delivery"):
+        for step in ("packed", "out_for_delivery"):
             update_order_status(order, step, changed_by="admin")
 
         with self.assertRaises(BusinessRuleError) as ctx:

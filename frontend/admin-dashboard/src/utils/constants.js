@@ -3,8 +3,6 @@
 
 export const ORDER_STATUS_LABELS = {
   pending: "Pending",
-  confirmed: "Confirmed",
-  processing: "Processing",
   packed: "Packed",
   out_for_delivery: "Out for delivery",
   delivered: "Delivered",
@@ -15,8 +13,6 @@ export const ORDER_STATUS_LABELS = {
 
 export const ORDER_STATUS_STYLES = {
   pending: "bg-amber-100 text-amber-800",
-  confirmed: "bg-sky-100 text-sky-800",
-  processing: "bg-indigo-100 text-indigo-800",
   packed: "bg-violet-100 text-violet-800",
   out_for_delivery: "bg-blue-100 text-blue-800",
   delivered: "bg-emerald-100 text-emerald-800",
@@ -95,8 +91,8 @@ export const CUSTOMER_STATUSES = [
 ];
 
 export const ORDER_STATUS_FLOW = [
-  "pending", "confirmed", "processing", "packed",
-  "out_for_delivery", "delivered", "cancelled",
+  "pending", "packed",
+  "out_for_delivery", "delivered", "cancelled", "returned", "refunded",
 ];
 
 export const TICKET_STATUSES = [

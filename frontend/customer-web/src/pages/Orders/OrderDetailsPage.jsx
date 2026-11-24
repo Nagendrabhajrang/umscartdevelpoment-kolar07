@@ -107,7 +107,7 @@ export default function OrderDetailsPage() {
     }
   };
 
-  const steps = ["pending", "confirmed", "processing", "out_for_delivery", "delivered"];
+  const steps = ["pending", "packed", "out_for_delivery", "delivered", ...(order.status === "returned" || order.status === "refunded" ? ["returned"] : []), ...(order.status === "refunded" ? ["refunded"] : [])];
   const currentStep = steps.indexOf(order.status);
   const cancelled = order.status === "cancelled";
 

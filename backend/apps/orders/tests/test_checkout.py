@@ -19,7 +19,6 @@ from apps.orders.models import (
 from apps.orders.services import (
     cancel_order,
     checkout,
-    confirm_order,
     get_order_or_404,
     reorder,
     update_order_status,
@@ -264,18 +263,39 @@ class OrderStatusTransitionTests(TestCase):
         )
 
     def test_allowed_transition_map_is_consistent(self):
-        self.assertIn(OrderStatus.CONFIRMED, allowed_next_statuses(OrderStatus.PENDING))
+        self.assertIn(OrderStatus.PACKED, allowed_next_statuses(OrderStatus.PENDING))
         self.assertIn(OrderStatus.CANCELLED, allowed_next_statuses(OrderStatus.PENDING))
         self.assertEqual(allowed_next_statuses(OrderStatus.CANCELLED), set())
         self.assertEqual(allowed_next_statuses(OrderStatus.REFUNDED), set())
+
+    def test_seven_status_transition_map(self):
+        expected = {
+            "pending": {"packed", "cancelled"},
+            "packed": {"out_for_delivery", "cancelled"},
+            "out_for_delivery": {"delivered", "cancelled"},
+            "delivered": {"returned"},
+            "returned": {"refunded"},
+            "cancelled": set(),
+            "refunded": set(),
+        }
+        self.assertEqual(set(OrderStatus.values), set(expected))
+        for current, targets in expected.items():
+            self.assertEqual(allowed_next_statuses(current), targets)
+        for removed in ("confirmed", "processing"):
+            with self.assertRaises(BusinessRuleError):
+                update_order_status(self.order, removed)
+
+    def test_cancel_out_for_delivery(self):
+        update_order_status(self.order, OrderStatus.PACKED)
+        update_order_status(self.order, OrderStatus.OUT_FOR_DELIVERY)
+        cancel_order(self.order)
+        self.assertEqual(self.order.status, OrderStatus.CANCELLED)
 
     def test_happy_path_transitions(self):
         # Cash-first: the order cannot be delivered until the money is in, so
         # the happy path collects the COD payment at out_for_delivery and only
         # then records the delivery.
         for target in [
-            OrderStatus.CONFIRMED,
-            OrderStatus.PROCESSING,
             OrderStatus.PACKED,
             OrderStatus.OUT_FOR_DELIVERY,
         ]:
@@ -292,8 +312,6 @@ class OrderStatusTransitionTests(TestCase):
     def test_cannot_deliver_before_cash_is_collected(self):
         """The API is the real boundary: hiding the button is not enough."""
         for target in [
-            OrderStatus.CONFIRMED,
-            OrderStatus.PROCESSING,
             OrderStatus.PACKED,
             OrderStatus.OUT_FOR_DELIVERY,
         ]:
@@ -312,7 +330,7 @@ class OrderStatusTransitionTests(TestCase):
             update_order_status(self.order, "teleported")
 
     def test_each_transition_is_logged(self):
-        confirm_order(self.order)
+        update_order_status(self.order, OrderStatus.PACKED)
         self.assertEqual(self.order.status_history.count(), 2)
 
     def test_cancel_restores_stock(self):
@@ -345,7 +363,7 @@ class OrderStatusTransitionTests(TestCase):
 
     def test_cannot_cancel_delivered_order(self):
         for target in [
-            OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.PACKED,
+            OrderStatus.PACKED,
             OrderStatus.OUT_FOR_DELIVERY,
         ]:
             self.order = update_order_status(self.order, target)
@@ -494,7 +512,7 @@ class CheckoutAPITests(APITestCase):
         self.assertEqual(bad.status_code, status.HTTP_409_CONFLICT)
 
         ok = self.client.post(f"/api/v1/orders/{order_id}/status/",
-                              {"status": "confirmed"}, format="json")
+                              {"status": "packed"}, format="json")
         self.assertEqual(ok.status_code, status.HTTP_200_OK)
 
     def test_cancel_endpoint(self):

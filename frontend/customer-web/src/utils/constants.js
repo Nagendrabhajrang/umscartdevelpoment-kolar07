@@ -2,8 +2,9 @@
 
 export const ORDER_STATUS_LABELS = {
   pending: "Pending",
-  confirmed: "Confirmed",
-  processing: "Processing",
+  packed: "Packed",
+  returned: "Returned",
+  refunded: "Refunded",
   out_for_delivery: "Out for delivery",
   delivered: "Delivered",
   cancelled: "Cancelled",
@@ -12,8 +13,9 @@ export const ORDER_STATUS_LABELS = {
 /** Badge classes — neutral, positive, caution, negative. */
 export const ORDER_STATUS_STYLES = {
   pending: "bg-amber-50 text-amber-800 ring-amber-200",
-  confirmed: "bg-sky-50 text-sky-800 ring-sky-200",
-  processing: "bg-indigo-50 text-indigo-800 ring-indigo-200",
+  packed: "bg-indigo-50 text-indigo-800 ring-indigo-200",
+  returned: "bg-orange-50 text-orange-800 ring-orange-200",
+  refunded: "bg-slate-100 text-slate-700 ring-slate-200",
   out_for_delivery: "bg-violet-50 text-violet-800 ring-violet-200",
   delivered: "bg-brand-50 text-brand-800 ring-brand-200",
   cancelled: "bg-rose-50 text-rose-800 ring-rose-200",

@@ -135,8 +135,6 @@ def validate_promotion_for_customer(promotion: Promotion, customer, items,
         has_orders = Order.objects.filter(
             customer=customer,
             status__in=[
-                "confirmed",
-                "processing",
                 "packed",
                 "out_for_delivery",
                 "delivered",
