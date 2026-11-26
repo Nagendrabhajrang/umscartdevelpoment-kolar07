@@ -1,13 +1,19 @@
-"""Payment models: Cash on Delivery only.
+"""Payment models: cash on delivery and UPI.
 
-UPI was removed from this build. Payments are cash, collected at the door:
+Two flows share one table, told apart by ``payment_method``:
 
-* The payment record is created at checkout with ``payment_status=pending``.
-* When the delivery is completed the rider collects cash and an admin records
-  it, moving the payment to ``paid`` (``payment_status``) and the order's
-  payment status to ``cod_collected``.
-* Every decision is appended to :class:`PaymentVerification`, an immutable
-  audit trail.
+* **COD** - the record is created at checkout with ``payment_status=pending``.
+  When the delivery is completed the rider collects cash and an admin records
+  it, moving the payment to ``paid`` and the order to ``cod_collected``.
+* **UPI** - the record is created at checkout with
+  ``payment_status=awaiting_verification``. The customer scans the store QR,
+  pays, then submits the UPI reference (optionally with a screenshot), which
+  moves the payment to ``pending``. An admin approves it (``paid``, order
+  ``paid``) or rejects it with a reason (``rejected``; the customer can
+  resubmit).
+
+Every decision is appended to :class:`PaymentVerification`, an immutable
+audit trail.
 
 Field naming follows the agreed specification:
 
@@ -56,6 +62,7 @@ class PaymentStatus(models.TextChoices):
 
 class PaymentMethod(models.TextChoices):
     COD = "cod", "Cash on delivery"
+    UPI = "upi", "UPI"
 
 
 class VerificationAction(models.TextChoices):
@@ -83,7 +90,7 @@ class Payment(BaseModel):
         max_length=10, choices=PaymentMethod.choices, db_index=True, default="cod"
     )
 
-    # -- 5: UPI reference (kept for future use; blank for COD) --------------
+    # -- 5: UPI reference (blank until the customer submits it) -------------
     transaction_id = models.CharField(
         max_length=120, blank=True, default="", db_index=True,
         help_text="UPI / transaction reference. Blank for cash payments.",

@@ -5,6 +5,7 @@ from rest_framework.routers import SimpleRouter
 
 from apps.store_settings.views import (
     DeliveryQuoteView,
+    GenerateUpiQrView,
     DeliverySlabViewSet,
     StoreHolidayViewSet,
     StoreSettingsView,
@@ -19,5 +20,6 @@ router.register("holidays", StoreHolidayViewSet, basename="holiday")
 urlpatterns = [
     path("", StoreSettingsView.as_view(), name="store-settings"),
     path("delivery-quote/", DeliveryQuoteView.as_view(), name="delivery-quote"),
+    path("upi-qr/", GenerateUpiQrView.as_view(), name="generate-upi-qr"),
     *router.urls,
 ]

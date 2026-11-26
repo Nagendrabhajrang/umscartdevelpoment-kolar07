@@ -119,6 +119,10 @@ class PaymentProofSerializer(serializers.Serializer):
     """Customer submission of a UPI transaction reference and proof."""
 
     transaction_reference = serializers.CharField(max_length=120)
+    # Optional: the phone number or Google Pay / UPI number the customer paid
+    # from. It is what a store actually needs to trace a UPI credit when the
+    # transaction ID alone is not enough.
+    payer_mobile = serializers.CharField(required=False, allow_blank=True, max_length=30, default="")
     payer_name = serializers.CharField(required=False, allow_blank=True, max_length=150, default="")
     upi_id = serializers.CharField(required=False, allow_blank=True, max_length=120, default="")
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000, default="")
@@ -131,6 +135,21 @@ class PaymentProofSerializer(serializers.Serializer):
                 "Enter the complete UPI transaction reference (at least 6 characters)."
             )
         return value
+
+    def validate_payer_mobile(self, value):
+        value = (value or "").strip()
+        if not value:
+            return ""
+        compact = value.replace(" ", "").replace("-", "")
+        digits = compact[1:] if compact.startswith("+") else compact
+        if digits.isdigit() and 10 <= len(digits) <= 15:
+            return value[:30]
+        # 9876543210@ybl / name@okhdfcbank - a UPI handle is equally valid
+        if "@" in compact and 3 <= len(compact) <= 60:
+            return value[:30]
+        raise serializers.ValidationError(
+            "Enter a 10-digit mobile number or a UPI handle (e.g. 9876543210@ybl), or leave it blank."
+        )
 
     def validate_payment_proof(self, value):
         if value is not None:

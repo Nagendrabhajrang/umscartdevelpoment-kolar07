@@ -23,6 +23,11 @@ export const ORDER_STATUS_STYLES = {
 
 export const PAYMENT_STATUS_LABELS = {
   pending: "Cash due",
+  pending_verification: "Payment review",
+  awaiting_verification: "Awaiting UPI payment",
+  verified: "Verified",
+  collected: "Cash collected",
+  cancelled: "Cancelled",
   approved: "Approved",
   rejected: "Rejected",
   paid: "Paid",
@@ -34,6 +39,11 @@ export const PAYMENT_STATUS_LABELS = {
 
 export const PAYMENT_STATUS_STYLES = {
   pending: "bg-amber-50 text-amber-800 ring-amber-200",
+  pending_verification: "bg-sky-50 text-sky-800 ring-sky-200",
+  awaiting_verification: "bg-amber-50 text-amber-800 ring-amber-200",
+  verified: "bg-brand-50 text-brand-800 ring-brand-200",
+  collected: "bg-brand-50 text-brand-800 ring-brand-200",
+  cancelled: "bg-slate-100 text-slate-700 ring-slate-200",
   approved: "bg-sky-50 text-sky-800 ring-sky-200",
   rejected: "bg-rose-50 text-rose-800 ring-rose-200",
   paid: "bg-brand-50 text-brand-800 ring-brand-200",

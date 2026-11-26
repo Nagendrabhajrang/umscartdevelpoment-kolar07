@@ -127,7 +127,9 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
+    # Storefront and dashboard sessions live in different cookies, so signing in
+    # to one never replaces the other. See common.middleware.
+    "common.middleware.ClientScopedSessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -425,6 +427,15 @@ MONEY_DECIMAL_PLACES = 2
 
 # Session/CSRF cookie names are namespaced so several projects can share a host.
 SESSION_COOKIE_NAME = "ums_mart_sessionid"
+
+# When the storefront runs inside a cross-site frame, some browsers refuse the
+# session cookie outright (third-party cookie blocking, sandboxed iframes). With
+# this on, the login response also carries the session key so the SPA can send it
+# as `Authorization: Bearer <key>` and stay signed in without any cookie.
+#
+# OFF by default: a cookie is the safer credential (HttpOnly, CSRF-protected,
+# invisible to JavaScript). Enable it only where cookies cannot work.
+AUTH_BEARER_FALLBACK = env_bool("AUTH_BEARER_FALLBACK", False)
 CSRF_COOKIE_NAME = "ums_mart_csrftoken"
 LANGUAGE_COOKIE_NAME = "ums_mart_language"
 

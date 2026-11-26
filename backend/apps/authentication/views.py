@@ -89,6 +89,7 @@ class AdminVerifyMFAView(APIView):
         data = auth_service.admin_verify_mfa(
             code=serializer.validated_data["code"], request=request
         )
+        data = session_service.attach_session_token(data, request)
         return _clear_legacy_refresh_cookie(_ok(data))
 
 
@@ -208,6 +209,9 @@ class CustomerVerifyOTPView(APIView):
             request=request,
         )
         # The Django session cookie is already on the response: login() sets it.
+        # In the sandbox preview the body also carries `session_token`, because a
+        # cross-site frame may refuse that cookie entirely.
+        payload = session_service.attach_session_token(payload, request)
         response = _ok(payload)
         return _clear_legacy_refresh_cookie(response)
 

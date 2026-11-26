@@ -172,3 +172,75 @@ def get_holiday_or_404(identifier) -> StoreHoliday:
             message=f"Holiday '{identifier}' was not found.", code="holiday_not_found"
         )
     return holiday
+
+
+# ---------------------------------------------------------------------------
+# UPI
+# ---------------------------------------------------------------------------
+def build_upi_uri(upi_id: str, payee_name: str = "", amount=None,
+                  note: str = "", currency: str = "INR") -> str:
+    """Build the standard ``upi://pay`` intent encoded in the store QR.
+
+    Every Indian UPI app understands this scheme, so the same string works for
+    GPay, PhonePe, Paytm and bank apps::
+
+        upi://pay?pa=store@bank&pn=UMS%20Mart&am=324.80&cu=INR&tn=UMS-2026-0001
+    """
+    from urllib.parse import quote
+
+    params = [f"pa={quote(upi_id.strip(), safe='')}"]
+    if payee_name:
+        params.append(f"pn={quote(payee_name.strip(), safe='')}")
+    if amount is not None:
+        params.append(f"am={Decimal(str(amount)):.2f}")
+    params.append(f"cu={currency or 'INR'}")
+    if note:
+        params.append(f"tn={quote(str(note)[:50], safe='')}")
+    return "upi://pay?" + "&".join(params)
+
+
+def generate_upi_qr_image(settings_obj: StoreSettings, amount=None, note: str = "",
+                          filename: str = "store_upi_qr.png") -> str | None:
+    """Render the store's UPI QR into MEDIA_ROOT and attach it to the settings.
+
+    Refuses when no UPI ID is configured. Returns the stored file name, or None
+    if the ``segno`` dependency is unavailable (the storefront then just shows
+    the UPI ID and a placeholder).
+    """
+    if not (settings_obj.upi_id or "").strip():
+        raise BusinessRuleError(
+            message="Set a UPI ID before generating a QR code.",
+            code="missing_upi_id",
+        )
+    try:
+        import io
+
+        import segno
+    except ImportError:  # pragma: no cover - optional dependency
+        logger.warning("segno is not installed; skipping UPI QR generation")
+        return None
+
+    uri = build_upi_uri(
+        settings_obj.upi_id, settings_obj.upi_payee_name or settings_obj.store_name,
+        amount=amount, note=note, currency=settings_obj.currency_code,
+    )
+    buffer = io.BytesIO()
+    segno.make_qr(uri, error="m").save(
+        buffer, kind="png", scale=8, border=3, dark="#0f172a", light="#ffffff"
+    )
+    from django.core.files.base import ContentFile
+
+    # Replace rather than accumulate. Two files can be in the way: the one the
+    # field currently points at, and anything already sitting at the target
+    # path (which would make Django hand back "name_AbC123.png" instead).
+    from django.core.files.storage import default_storage
+
+    target = f"store/upi/{filename}"
+    if settings_obj.upi_qr_image:
+        settings_obj.upi_qr_image.delete(save=False)
+    if default_storage.exists(target):
+        default_storage.delete(target)
+
+    settings_obj.upi_qr_image.save(filename, ContentFile(buffer.getvalue()), save=True)
+    logger.info("UPI QR generated for %s", settings_obj.upi_id)
+    return settings_obj.upi_qr_image.name

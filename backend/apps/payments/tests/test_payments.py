@@ -1,8 +1,14 @@
-"""Payments: cash-on-delivery recording, refunds, and the disabled-UPI guards.
+"""Payments: cash-on-delivery recording, the UPI lifecycle, and refunds.
 
-UPI was removed from this build (COD only), so the old UPI test block is gone.
-What remains proves the COD lifecycle, the refund arithmetic, and that the
-retired UPI endpoints fail loudly instead of silently succeeding.
+Two flows share one table:
+
+* COD is recorded at the door, and only then may the order be delivered.
+* UPI starts at ``awaiting_verification``; the customer submits a reference
+  (``pending``), and an admin approves (``paid``) or rejects (``rejected``, with
+  the customer free to resubmit).
+
+The UPI-only operations must also refuse a cash payment - that is what the
+"guard" assertions below cover.
 """
 
 from decimal import Decimal
@@ -125,34 +131,34 @@ class CodPaymentTests(TestCase):
             update_order_status(order, "delivered", changed_by="admin")
         self.assertEqual(ctx.exception.code, "payment_required_before_delivery")
 
-    # -- disabled UPI -------------------------------------------------
-    def test_upi_details_endpoint_is_disabled(self):
+    # -- UPI guards on a cash payment ---------------------------------
+    def test_upi_details_refuses_a_cash_payment(self):
         order = self._make_order()
         payment = Payment.objects.get(order=order)
         with self.assertRaises(BusinessRuleError) as ctx:
             get_upi_details(payment)
-        self.assertEqual(ctx.exception.code, "upi_not_enabled")
+        self.assertEqual(ctx.exception.code, "not_a_upi_payment")
 
-    def test_submit_payment_proof_is_disabled(self):
+    def test_submit_payment_proof_refuses_a_cash_payment(self):
         order = self._make_order()
         payment = Payment.objects.get(order=order)
         with self.assertRaises(BusinessRuleError) as ctx:
             submit_payment_proof(payment, transaction_reference="ABCDEF123")
-        self.assertEqual(ctx.exception.code, "upi_not_enabled")
+        self.assertEqual(ctx.exception.code, "not_a_upi_payment")
 
-    def test_approve_payment_is_disabled(self):
+    def test_approve_payment_refuses_a_cash_payment(self):
         order = self._make_order()
         payment = Payment.objects.get(order=order)
         with self.assertRaises(BusinessRuleError) as ctx:
             approve_payment(payment, verified_by="admin")
-        self.assertEqual(ctx.exception.code, "upi_not_enabled")
+        self.assertEqual(ctx.exception.code, "not_a_upi_payment")
 
-    def test_reject_payment_is_disabled(self):
+    def test_reject_payment_refuses_a_cash_payment(self):
         order = self._make_order()
         payment = Payment.objects.get(order=order)
         with self.assertRaises(BusinessRuleError) as ctx:
             reject_payment(payment, reason="not paid", verified_by="admin")
-        self.assertEqual(ctx.exception.code, "upi_not_enabled")
+        self.assertEqual(ctx.exception.code, "not_a_upi_payment")
 
     # -- refunds ------------------------------------------------------
     def test_refund_requires_a_settled_payment(self):
@@ -265,3 +271,149 @@ class PaymentAPITests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 400)
+
+
+class UpiPaymentTests(TestCase):
+    """The UPI lifecycle: order -> reference -> approve/reject -> resubmit."""
+
+    def setUp(self):
+        self.store = make_store(
+            minimum_order_value=Decimal("0.00"),
+            delivery_charge=Decimal("0.00"),
+            free_delivery_threshold=Decimal("0.00"),
+            upi_enabled=True,
+            upi_id="umsmart@okhdfcbank",
+            upi_payee_name="UMS Mart",
+        )
+        self.customer = make_customer()
+        self.address = make_address(self.customer)
+        self.product = make_product(
+            quantity=50, mrp=Decimal("100"), selling_price=Decimal("100")
+        )
+
+    def _make_upi_order(self, quantity=2):
+        add_to_cart(self.customer, self.product, quantity=quantity)
+        return checkout(
+            customer=self.customer, address=self.address, payment_method="upi"
+        )
+
+    def test_checkout_creates_an_awaiting_upi_payment(self):
+        order = self._make_upi_order()
+        payment = Payment.objects.get(order=order)
+        self.assertEqual(order.payment_method, "upi")
+        self.assertEqual(order.payment_status, "pending_verification")
+        self.assertEqual(payment.payment_method, PaymentMethod.UPI)
+        self.assertEqual(payment.payment_status, PaymentStatus.AWAITING_VERIFICATION)
+        # The audit trail starts with the checkout row.
+        self.assertEqual(payment.verifications.count(), 1)
+
+    def test_checkout_refuses_upi_when_the_store_switched_it_off(self):
+        self.store.upi_enabled = False
+        self.store.save(update_fields=["upi_enabled"])
+        add_to_cart(self.customer, self.product, quantity=1)
+        with self.assertRaises(BusinessRuleError) as ctx:
+            checkout(customer=self.customer, address=self.address, payment_method="upi")
+        self.assertEqual(ctx.exception.code, "upi_disabled")
+
+    def test_checkout_refuses_upi_without_a_configured_upi_id(self):
+        self.store.upi_id = ""
+        self.store.save(update_fields=["upi_id"])
+        add_to_cart(self.customer, self.product, quantity=1)
+        with self.assertRaises(BusinessRuleError) as ctx:
+            checkout(customer=self.customer, address=self.address, payment_method="upi")
+        self.assertEqual(ctx.exception.code, "upi_not_configured")
+
+    def test_upi_details_carry_the_store_qr_and_amount(self):
+        order = self._make_upi_order()
+        details = get_upi_details(Payment.objects.get(order=order))
+        self.assertEqual(details["upi_id"], "umsmart@okhdfcbank")
+        self.assertEqual(details["upi_payee_name"], "UMS Mart")
+        self.assertEqual(details["amount"], str(order.grand_total))
+        self.assertEqual(details["order_number"], order.order_number)
+        self.assertTrue(details["can_submit"])
+
+    def test_customer_submits_a_reference(self):
+        order = self._make_upi_order()
+        payment = submit_payment_proof(
+            Payment.objects.get(order=order),
+            transaction_reference="4291000123456789",
+            payer_name="Meera Iyer",
+        )
+        self.assertEqual(payment.payment_status, PaymentStatus.PENDING)
+        self.assertEqual(payment.transaction_id, "4291000123456789")
+        self.assertEqual(payment.payer_name, "Meera Iyer")
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, "pending_verification")
+        actions = list(payment.verifications.values_list("action", flat=True))
+        self.assertIn("submitted", actions)
+
+    def test_a_short_reference_is_refused(self):
+        order = self._make_upi_order()
+        with self.assertRaises(BusinessRuleError) as ctx:
+            submit_payment_proof(Payment.objects.get(order=order), transaction_reference="123")
+        self.assertEqual(ctx.exception.code, "invalid_transaction_reference")
+
+    def test_approval_settles_the_payment_and_the_order(self):
+        order = self._make_upi_order()
+        payment = Payment.objects.get(order=order)
+        submit_payment_proof(payment, transaction_reference="4291000123456789")
+
+        approved = approve_payment(payment, verified_by="admin", remarks="matched")
+        self.assertEqual(approved.payment_status, PaymentStatus.PAID)
+        self.assertIsNotNone(approved.paid_at)
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, "paid")
+        self.assertTrue(order.is_paid)
+        self.assertIn(
+            "approved", list(approved.verifications.values_list("action", flat=True))
+        )
+
+    def test_cannot_approve_before_the_customer_submits_a_reference(self):
+        order = self._make_upi_order()
+        with self.assertRaises(BusinessRuleError) as ctx:
+            approve_payment(Payment.objects.get(order=order), verified_by="admin")
+        self.assertEqual(ctx.exception.code, "missing_transaction_reference")
+
+    def test_rejection_reopens_the_payment_for_a_resubmission(self):
+        order = self._make_upi_order()
+        payment = Payment.objects.get(order=order)
+        submit_payment_proof(payment, transaction_reference="4291000123456789")
+
+        rejected = reject_payment(payment, reason="no such UTR", verified_by="admin")
+        self.assertEqual(rejected.payment_status, PaymentStatus.REJECTED)
+        self.assertEqual(rejected.rejection_reason, "no such UTR")
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, "unpaid")
+
+        resubmitted = submit_payment_proof(
+            rejected, transaction_reference="4291000999888777"
+        )
+        self.assertEqual(resubmitted.payment_status, PaymentStatus.PENDING)
+        self.assertEqual(resubmitted.rejection_reason, "")
+        self.assertEqual(resubmitted.verification_attempts, 2)
+        self.assertIn(
+            "resubmitted",
+            list(resubmitted.verifications.values_list("action", flat=True)),
+        )
+
+    def test_an_approved_payment_cannot_be_rejected(self):
+        order = self._make_upi_order()
+        payment = Payment.objects.get(order=order)
+        submit_payment_proof(payment, transaction_reference="4291000123456789")
+        approve_payment(payment, verified_by="admin")
+        with self.assertRaises(ConflictError):
+            reject_payment(payment, reason="too late", verified_by="admin")
+
+    def test_pending_verification_queue_lists_upi_payments_only(self):
+        from apps.payments.selectors import pending_verifications
+
+        upi_order = self._make_upi_order()
+        # A cash order in the same store must not appear in the UPI queue.
+        add_to_cart(self.customer, self.product, quantity=1)
+        checkout(customer=self.customer, address=self.address, payment_method="cod")
+
+        queue = list(pending_verifications())
+        self.assertEqual(
+            [p.order_id for p in queue], [upi_order.id],
+            "the queue should hold exactly the UPI payment",
+        )

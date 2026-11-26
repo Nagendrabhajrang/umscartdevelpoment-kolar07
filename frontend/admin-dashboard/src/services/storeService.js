@@ -26,6 +26,9 @@ export const storeService = {
   deleteHoliday: (id) => del(`/store-settings/holidays/${id}/`),
 
   deliveryQuote: (payload) => post("/store-settings/delivery-quote/", payload),
+
+  /** Draw a fresh QR from the saved UPI ID (no phone, no upload). */
+  generateUpiQr: (payload = {}) => post("/store-settings/upi-qr/", payload),
 };
 
 export default storeService;

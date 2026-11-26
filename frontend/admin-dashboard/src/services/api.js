@@ -17,6 +17,8 @@ import {
   clearAdminSession,
   ensureCsrf,
   getCookie,
+  getSessionToken,
+  refreshCsrf,
 } from "./adminAuthService";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
@@ -68,6 +70,21 @@ api.interceptors.request.use(async (config) => {
     const token = getCookie(CSRF_COOKIE);
     if (token) config.headers[CSRF_HEADER] = token;
   }
+
+  /*
+   * Cookie-blocked fallback: replay the session key when the API issued one
+   * (only happens with AUTH_BEARER_FALLBACK on, i.e. the hosted preview).
+   */
+  const bearer = getSessionToken();
+  if (bearer) config.headers.Authorization = `Bearer ${bearer}`;
+
+  /*
+   * Which app this is. The API keeps the dashboard's session in its own cookie
+   * (`ums_mart_admin_sessionid`) for requests that say "admin", so signing in
+   * here can never replace the shopper's session in the same browser - and the
+   * storefront, which sends no such header, is never mistaken for the dashboard.
+   */
+  config.headers["X-Client"] = "admin";
 
   config.headers["X-Customer-Id"] = getCustomerId();
 
@@ -136,15 +153,41 @@ export function normaliseError(error) {
  */
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
+    const normalised = normaliseError(error);
+    const config = error?.config;
+
+    /*
+     * Self-heal a stale CSRF token before the operator ever sees it.
+     *
+     * A settings save (or any PATCH) that fails with `csrf_failed` used to show
+     * "your security token expired, refresh the page". The token is not the
+     * session: it can be re-fetched mechanically, so the request is replayed once
+     * with a fresh one. A second failure is a real CSRF/cookie problem and is
+     * reported normally.
+     */
+    if (
+      normalised.code === "csrf_failed" &&
+      config &&
+      !config._csrfRetried &&
+      UNSAFE.has((config.method || "").toLowerCase())
+    ) {
+      config._csrfRetried = true;
+      const fresh = await refreshCsrf();
+      if (fresh) {
+        config.headers = config.headers || {};
+        config.headers[CSRF_HEADER] = fresh;
+        return api(config);
+      }
+    }
 
     if (status === 401) {
       clearAdminSession();
       window.dispatchEvent(new CustomEvent("ums:admin-session-invalid"));
     }
 
-    return Promise.reject(normaliseError(error));
+    return Promise.reject(normalised);
   },
 );
 

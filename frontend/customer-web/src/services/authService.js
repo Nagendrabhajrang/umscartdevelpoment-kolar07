@@ -14,6 +14,14 @@
  * so the header does not flicker on reload. It is not a credential and it is
  * thrown away the moment the server says the session is gone.
  *
+ * COOKIE-BLOCKED FALLBACK: when the app runs inside a frame that belongs to
+ * another site, browsers may refuse the session cookie outright and every
+ * request arrives anonymous ("this browser blocked the sign-in cookie"). The API
+ * then returns the session key in the login response instead, and it is kept
+ * here as `ums.auth.bearer` and sent as an `Authorization: Bearer` header. It is
+ * only ever issued when the server has AUTH_BEARER_FALLBACK on (the sandbox
+ * preview); in development and production the response has no token at all.
+ *
  * CSRF: Django rejects unsafe requests without an `X-CSRFToken` header. That
  * token comes from the `ums_mart_csrftoken` cookie (readable on purpose) and is
  * planted by `/api/auth/csrf/` on boot.
@@ -35,6 +43,9 @@ const LEGACY_KEYS = [
 
 const CSRF_COOKIE = "ums_mart_csrftoken";
 const CSRF_HEADER = "X-CSRFToken";
+
+/* Session key used only when the browser refuses the session cookie. */
+const BEARER_KEY = "ums.auth.bearer";
 
 /* ------------------------------------------------------------------ */
 /* Storage                                                            */
@@ -85,7 +96,34 @@ export function storeSession({ user } = {}) {
 
 export function clearSession() {
   write(USER_KEY, null);
+  write(BEARER_KEY, null);
   purgeLegacyStorage();
+}
+
+/* ------------------------------------------------------------------ */
+/* Cookie-blocked fallback                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Keep the session key the API handed back, if it handed one back.
+ *
+ * The key is stored (so a reload stays signed in) and also mirrored in a module
+ * variable: if storage is blocked too, at least this tab keeps working.
+ */
+let memoryBearer = null;
+
+export function storeSessionToken(token) {
+  memoryBearer = token || null;
+  write(BEARER_KEY, token || null);
+}
+
+export function getSessionToken() {
+  return memoryBearer ?? read(BEARER_KEY);
+}
+
+export function clearSessionToken() {
+  memoryBearer = null;
+  write(BEARER_KEY, null);
 }
 
 /* ------------------------------------------------------------------ */
@@ -126,6 +164,31 @@ export function ensureCsrf() {
     });
 
   return csrfReady;
+}
+
+/**
+ * Throw the CSRF token away and ask for a new one.
+ *
+ * A CSRF token is tied to a server-side secret and a cookie; when the two drift
+ * apart - the cookie was rotated, restored from a stale tab, or was dropped by a
+ * browser that blocks site data - every unsafe request is answered with
+ * `csrf_failed` ("your security token expired"). The old copy is deleted first so
+ * the server cannot just echo it back, then the endpoint is called for a fresh
+ * one. Returns the new token, or null when cookies are blocked entirely.
+ */
+export async function refreshCsrf() {
+  csrfReady = null;
+  try {
+    document.cookie = `${CSRF_COOKIE}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  } catch {
+    /* storage blocked - nothing to drop */
+  }
+  await fetch(`${AUTH_BASE}/auth/csrf/`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  }).catch(() => null);
+  return getCookie(CSRF_COOKIE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -178,8 +241,22 @@ async function request(
 ) {
   const headers = { "Content-Type": "application/json", ...(extra || {}) };
 
+  /*
+   * Cookie-blocked fallback: if a session key was issued, send it. The server
+   * accepts it in place of the cookie and does not require CSRF for it (an
+   * explicit header cannot be forged by a cross-site form post).
+   */
+  const bearer = getSessionToken();
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+  /*
+   * Echo the CSRF token whenever the cookie exists - even when a bearer token is
+   * being sent. The server ignores it on the bearer path, but a *stale* bearer
+   * (issued before the session was reset) makes the server fall back to cookie
+   * auth, and that path does need the header. Sending it always removes a whole
+   * class of "your security token expired" failures.
+   */
   if (csrf && UNSAFE.has(method)) {
-    // Make sure the cookie exists before we try to echo it.
     if (!getCookie(CSRF_COOKIE)) await ensureCsrf();
     const token = getCookie(CSRF_COOKIE);
     if (token) headers[CSRF_HEADER] = token;
@@ -232,11 +309,17 @@ export const authService = {
    * Round 27 behaviour is preserved: this call is where a guest basket becomes
    * the customer's basket, inside the same request that opens the session.
    */
-  verifyOtp: (mobileNumber, code, guestKey) =>
-    request("/customer/verify-otp/", {
+  verifyOtp: async (mobileNumber, code, guestKey) => {
+    // Django cycles the session key when it logs a user in, so clear whatever we
+    // held before the call - the new key (if any) is the only valid one.
+    clearSessionToken();
+    const data = await request("/customer/verify-otp/", {
       body: { mobile_number: mobileNumber, code },
       headers: guestKey ? { "X-Guest-Cart": guestKey } : undefined,
-    }),
+    });
+    if (data?.session_token) storeSessionToken(data.session_token);
+    return data;
+  },
 
   resendOtp: (mobileNumber) =>
     request("/customer/resend-otp/", { body: { mobile_number: mobileNumber } }),
@@ -256,7 +339,18 @@ export const authService = {
    */
   session: () => request("/auth/session/", { method: "GET", csrf: false }),
 
-  logout: () => request("/customer/logout/"),
+  /**
+   * Sign out. The token is cleared after the call so the request itself still
+   * carries it - otherwise a cookie-blocked browser would send an anonymous
+   * logout and the session row would survive on the server.
+   */
+  logout: async () => {
+    try {
+      return await request("/customer/logout/");
+    } finally {
+      clearSessionToken();
+    }
+  },
 
   logoutAll: () => request("/auth/logout-all/"),
 };

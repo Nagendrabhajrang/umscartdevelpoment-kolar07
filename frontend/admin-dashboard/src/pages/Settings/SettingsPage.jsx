@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  Banknote, CalendarOff, Info, Plus, Save, ShieldCheck, Smartphone, Store, Trash2, Truck,
+  Banknote, CalendarOff, Info, Plus, QrCode, Save, ShieldCheck, Smartphone, Store, Trash2, Truck,
 } from "lucide-react";
 import Button from "../../components/common/Button";
 import Input from "../../components/common/Input";
@@ -168,8 +168,9 @@ function StoreTab({ settings, onError }) {
 function PaymentsTab({ settings, onError }) {
   const { save, saving } = useSettingsSave(settings, onError);
   const { notify } = useNotification();
+  const { refresh, bumpDataVersion } = useStore();
   const {
-    register, handleSubmit, setError, formState: { errors },
+    register, handleSubmit, setError, getValues, reset, formState: { errors },
   } = useForm({
     resolver: zodResolver(settingsSchema.partial ? settingsSchema : settingsSchema),
     defaultValues: {
@@ -184,6 +185,29 @@ function PaymentsTab({ settings, onError }) {
   });
 
   const qrPreview = settings.upi_qr_image_url;
+  const [generating, setGenerating] = useState(false);
+
+  /**
+   * Regenerate the QR from the UPI ID saved on the server. Useful right after
+   * changing the VPA: the uploaded PNG would otherwise still point at the old
+   * one. Saves the current form first so the QR matches what is in the fields.
+   */
+  const generateQr = async () => {
+    setGenerating(true);
+    try {
+      const values = getValues();
+      await storeService.update(cleanPayload(values));
+      await storeService.generateUpiQr();
+      await refresh();
+      bumpDataVersion();
+      reset(values);
+      notify.success("QR code generated from the UPI ID");
+    } catch (err) {
+      notify.error(err.message || "Could not generate the QR code.");
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const onSubmit = async (values, e) => {
     const file = document.getElementById("upi-qr-image")?.files?.[0];
@@ -194,10 +218,11 @@ function PaymentsTab({ settings, onError }) {
     }
     // Multipart path for a new QR image.
     try {
-      const form = new FormData();
-      Object.entries(cleanPayload(values)).forEach(([k, v]) => form.append(k, v));
-      form.append("upi_qr_image", file);
       await storeService.update({ ...cleanPayload(values), upi_qr_image: file });
+      const input = document.getElementById("upi-qr-image");
+      if (input) input.value = "";
+      await refresh();
+      bumpDataVersion();
       notify.success("UPI settings and QR saved");
     } catch (err) {
       notify.error(err.message || "Could not upload the QR image.");
@@ -237,10 +262,16 @@ function PaymentsTab({ settings, onError }) {
             {qrPreview ? <img src={qrPreview} alt="Current UPI QR" className="h-full w-full object-contain p-1" /> : "Choose QR"}
           </label>
           <input id="upi-qr-image" type="file" accept="image/*" className="sr-only" />
-          <p className="text-[11px] text-slate-500">
-            Export the QR from your UPI app (GPay / PhonePe / Paytm) and upload the PNG.
-            This is the image customers scan at checkout.
-          </p>
+          <div className="min-w-0">
+            <p className="text-[11px] text-slate-500">
+              Export the QR from your UPI app (GPay / PhonePe / Paytm) and upload the PNG,
+              or let the server draw one from the UPI ID above.
+            </p>
+            <Button type="button" variant="secondary" size="xs" className="mt-2"
+              loading={generating} onClick={generateQr} leftIcon={<QrCode className="h-3.5 w-3.5" />}>
+              Generate QR from UPI ID
+            </Button>
+          </div>
         </div>
       </div>
 

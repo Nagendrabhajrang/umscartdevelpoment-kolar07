@@ -18,10 +18,50 @@ Two jobs are left for this module:
    silently granting the old rights.
 """
 
-from rest_framework.authentication import SessionAuthentication
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from rest_framework.authentication import SessionAuthentication, get_authorization_header
 
 from apps.accounts.models import UserRole
 from apps.authentication.services.session_service import SESSION_ROLE_KEY
+
+
+def bearer_session_key(request) -> str:
+    """Return the session key from an ``Authorization: Bearer <key>`` header.
+
+    Empty string when the header is absent or is not a Bearer token.
+    """
+    if not getattr(settings, "AUTH_BEARER_FALLBACK", False):
+        return ""
+    parts = get_authorization_header(request).split()
+    if len(parts) == 2 and parts[0].lower() == b"bearer":
+        try:
+            return parts[1].decode("ascii")
+        except UnicodeDecodeError:
+            return ""
+    return ""
+
+
+def user_from_session_key(session_key: str):
+    """Resolve a session key to its user, or None if the session is gone."""
+    if not session_key:
+        return None
+    from django.contrib.auth import SESSION_KEY
+    from django.contrib.auth.models import AnonymousUser
+
+    session = SessionStore(session_key=session_key)
+    try:
+        data = session.load()
+    except Exception:  # pragma: no cover - corrupt/absent session row
+        return None
+    user_id = data.get(SESSION_KEY)
+    if not user_id:
+        return None
+
+    from apps.accounts.models import User
+
+    user = User.objects.filter(pk=user_id, is_active=True).first()
+    return user or AnonymousUser()
 
 
 class UmsSessionAuthentication(SessionAuthentication):
@@ -52,6 +92,29 @@ class UmsSessionAuthentication(SessionAuthentication):
         return 'Session realm="ums-mart"'
 
     def authenticate(self, request):
+        # --- bearer fallback (cross-site frames where cookies are refused) ----
+        header_key = bearer_session_key(request)
+        if header_key:
+            user = user_from_session_key(header_key)
+            if user is None:
+                return None
+            from django.contrib.auth.models import AnonymousUser
+
+            if isinstance(user, AnonymousUser):
+                return None
+
+            # The session the key names must have been opened for this role.
+            opened_as = SessionStore(session_key=header_key).get(SESSION_ROLE_KEY)
+            if opened_as and opened_as != user.role:
+                return None
+
+            # CSRF is deliberately NOT enforced here: the credential is an
+            # explicit header, so a cross-site form post cannot carry it.
+            request._ums_via_bearer = True
+            request._ums_bearer_session_key = header_key
+            return (user, None)
+
+        # --- normal path: the Django session cookie --------------------------
         result = super().authenticate(request)
         if result is None:
             return None

@@ -47,14 +47,17 @@ class PaymentStatus(models.TextChoices):
 
 
 class PaymentMethod(models.TextChoices):
-    """Cash on delivery only - UPI was removed from this build.
+    """How the customer pays: cash at the door, or UPI up front.
 
-    The enum keeps the historical ``UPI`` member out deliberately: orders and
-    payments only ever accept ``cod`` now, so an accidental "upi" checkout is
-    rejected by the serializer instead of creating an unpayable order.
+    Both members are offered at checkout as long as the matching switch in
+    ``StoreSettings`` (``cod_enabled`` / ``upi_enabled``) is on. UPI orders are
+    created with ``payment_status=pending_verification``: the customer scans the
+    store QR shown on the storefront, then submits the UPI reference and an
+    admin approves it in the console.
     """
 
     COD = "cod", "Cash on delivery"
+    UPI = "upi", "UPI"
 
 
 class CancellationReason(models.TextChoices):

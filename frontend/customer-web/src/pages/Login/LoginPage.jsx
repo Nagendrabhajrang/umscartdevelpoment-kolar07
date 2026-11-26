@@ -140,12 +140,14 @@ export default function LoginPage() {
       setCode("");
       /*
        * `session_cookie_blocked` means the code was right but this browser would
-       * not keep the session cookie. Say so plainly, and reassure the shopper
-       * that nothing was lost - the guest cart is untouched by that path.
+       * not keep the session at all - neither the cookie nor the header token
+       * the API also hands back (see docs/SIGNIN_SESSIONS.md). Say so plainly,
+       * and reassure the shopper that nothing was lost: the guest cart is
+       * untouched by that path.
        */
       setError(
         e?.code === "session_cookie_blocked"
-          ? "We couldn't complete sign-in because this browser blocked the sign-in cookie. Your cart is still saved here. Allow cookies for this site, then try again."
+          ? "The code was right, but this browser refused to keep the sign-in session. Your cart is still saved here. Allow cookies and site data for this site, then try again."
           : e?.message || "That code did not work. Try again.",
       );
       if (e?.code !== "session_cookie_blocked") codeRef.current?.focus();

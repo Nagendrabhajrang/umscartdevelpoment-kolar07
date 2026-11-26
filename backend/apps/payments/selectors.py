@@ -77,7 +77,17 @@ def list_verifications(payment) -> QuerySet[PaymentVerification]:
 
 
 def pending_verifications() -> QuerySet[Payment]:
-    return list_payments({"status": PaymentStatus.AWAITING_VERIFICATION})
+    """UPI payments waiting on an admin decision.
+
+    Two statuses belong in this queue: ``awaiting_verification`` (order placed,
+    customer has not submitted the UPI reference yet) and ``pending`` (reference
+    submitted, admin has to check the bank statement). COD payments never
+    appear here - cash is recorded at the door instead.
+    """
+    return Payment.objects.select_related("order", "customer").filter(
+        payment_method=PaymentMethod.UPI,
+        payment_status__in=[PaymentStatus.AWAITING_VERIFICATION, PaymentStatus.PENDING],
+    ).order_by("created_at")
 
 
 def list_refunds(filters: dict | None = None) -> QuerySet[Refund]:
@@ -113,15 +123,19 @@ def payment_stats(filters: dict | None = None) -> dict:
         total_payments=Count("id"),
         total_amount=Sum("amount"),
         pending_verification=Count(
-            "id", filter=Q(payment_status=PaymentStatus.AWAITING_VERIFICATION)
+            "id",
+            filter=Q(
+                payment_method=PaymentMethod.UPI,
+                payment_status__in=[
+                    PaymentStatus.AWAITING_VERIFICATION, PaymentStatus.PENDING,
+                ],
+            ),
         ),
         rejected=Count("id", filter=Q(payment_status=PaymentStatus.REJECTED)),
         # Cash still to be collected. total - settled is wrong: it counts
         # refunded payments as "outstanding".
         pending_count=Count("id", filter=Q(payment_status=PaymentStatus.PENDING)),
-        # UPI is disabled in this build, so this is always zero - kept so the
-        # admin dashboard contract does not change.
-        upi_payments=Count("id", filter=Q(payment_method="upi")),
+        upi_payments=Count("id", filter=Q(payment_method=PaymentMethod.UPI)),
         cod_payments=Count("id", filter=Q(payment_method=PaymentMethod.COD)),
     )
     aggregate["settled_amount"] = settled.aggregate(total=Sum("amount"))["total"] or 0

@@ -22,9 +22,10 @@ import { PAYMENT_STATUSES } from "../../utils/constants";
 
 const TABS = [
   { key: "all", label: "All payments" },
-  // Every payment is cash on delivery; this queue lists cash not yet handed
-  // over. (The old "Awaiting verification" tab was UPI-only.)
+  // Cash not yet handed over.
   { key: "pending", label: "Cash to collect" },
+  // UPI references waiting on a human: /payments/pending-verification/.
+  { key: "verify", label: "UPI to verify" },
   { key: "paid", label: "Paid" },
   { key: "refunds", label: "Refunds" },
 ];
@@ -55,6 +56,8 @@ export default function PaymentsPage() {
   // is saved we send the admin straight back to that order.
   const [returnToOrder, setReturnToOrder] = useState(null);
   const [pending, setPending] = useState([]);
+  const [upiQueue, setUpiQueue] = useState([]);
+  const [upiLoading, setUpiLoading] = useState(false);
   const [tabCounts, setTabCounts] = useState({});
   const [pendingLoading, setPendingLoading] = useState(false);
 
@@ -87,13 +90,30 @@ export default function PaymentsPage() {
   const loadPending = useCallback(async () => {
     setPendingLoading(true);
     try {
-      // COD payments whose cash has not been recorded yet.
-      const page = await paymentService.list({ status: "pending", page_size: 50 });
+      // Cash whose collection has not been recorded yet. UPI payments also sit
+      // at status "pending" once the customer submits a reference, so the
+      // method filter is what keeps the two queues apart.
+      const page = await paymentService.list({
+        status: "pending", method: "cod", page_size: 50,
+      });
       setPending(page.results);
     } catch {
       setPending([]);
     } finally {
       setPendingLoading(false);
+    }
+  }, []);
+
+  /** UPI references the customer has submitted and nobody has checked yet. */
+  const loadUpiQueue = useCallback(async () => {
+    setUpiLoading(true);
+    try {
+      const page = await paymentService.pendingVerification({ page_size: 50 });
+      setUpiQueue(page.results);
+    } catch {
+      setUpiQueue([]);
+    } finally {
+      setUpiLoading(false);
     }
   }, []);
 
@@ -104,15 +124,17 @@ export default function PaymentsPage() {
    */
   const loadCounts = useCallback(async () => {
     try {
-      const [all, pendingCount, paidCount, refunded] = await Promise.all([
+      const [all, pendingCount, upiCount, paidCount, refunded] = await Promise.all([
         paymentService.list({ page_size: 1 }),
-        paymentService.list({ status: "pending", page_size: 1 }),
+        paymentService.list({ status: "pending", method: "cod", page_size: 1 }),
+        paymentService.pendingVerification({ page_size: 1 }),
         paymentService.list({ status: "paid", page_size: 1 }),
         paymentService.list({ status: "refunded", page_size: 1 }),
       ]);
       setTabCounts({
         all: all.count,
         pending: pendingCount.count,
+        verify: upiCount.count,
         paid: paidCount.count,
         refunds: refunded.count,
       });
@@ -123,6 +145,7 @@ export default function PaymentsPage() {
 
   useEffect(() => { loadStats(); loadCounts(); }, [loadStats, loadCounts, dataVersion]);
   useEffect(() => { if (tab === "pending") loadPending(); }, [tab, loadPending, dataVersion]);
+  useEffect(() => { if (tab === "verify") loadUpiQueue(); }, [tab, loadUpiQueue, dataVersion]);
   useEffect(() => { list.reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [dataVersion]);
 
   /**
@@ -158,6 +181,36 @@ export default function PaymentsPage() {
   }, [searchParams]);
 
   /**
+   * Arriving from a UPI order with `?verify=<id>` opens that payment's review
+   * panel straight away, mirroring the `?collect=` shortcut for cash.
+   */
+  useEffect(() => {
+    const target = searchParams.get("verify");
+    if (!target) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const payment = await paymentService.get(target);
+        if (!cancelled && payment) {
+          setReview(payment);
+          const from = searchParams.get("from") || payment.order;
+          if (from) setReturnToOrder(String(from));
+        }
+      } catch {
+        /* row may be gone - fall back to the plain list */
+      } finally {
+        if (!cancelled) {
+          const next = new URLSearchParams(searchParams);
+          next.delete("verify");
+          setSearchParams(next, { replace: true });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  /**
    * The tab IS a status filter. Without this the "Refunds" tab showed the
    * same rows as "All payments", which is why it looked broken.
    */
@@ -173,7 +226,9 @@ export default function PaymentsPage() {
       notify.success(`Payment ${payment.payment_number} approved`);
       setReview(null);
       loadStats();
-      if (tab === "pending") loadPending(); else list.reload();
+      if (tab === "pending") loadPending();
+      else if (tab === "verify") loadUpiQueue();
+      else list.reload();
       bumpDataVersion();
     } catch (e) {
       notify.error(e.message || "Could not approve this payment.");
@@ -194,7 +249,9 @@ export default function PaymentsPage() {
       setRejectOpen(null);
       setReason("");
       loadStats();
-      if (tab === "pending") loadPending(); else list.reload();
+      if (tab === "pending") loadPending();
+      else if (tab === "verify") loadUpiQueue();
+      else list.reload();
       bumpDataVersion();
     } catch (e) {
       notify.error(e.message || "Could not reject this payment.");
@@ -343,6 +400,15 @@ export default function PaymentsPage() {
       render: (r) => <span className="font-bold text-slate-900">{formatMoney(r.amount)}</span>,
     },
     {
+      key: "method",
+      header: "Method",
+      render: (r) => (
+        <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
+          {r.method === "upi" ? "UPI" : "COD"}
+        </span>
+      ),
+    },
+    {
       key: "status",
       header: "Status",
       render: (r) => <PaymentStatusBadge status={r.status} />,
@@ -353,9 +419,11 @@ export default function PaymentsPage() {
       align: "right",
       render: (row) => {
         const settled = isSettled(row);
+        const isUpi = row.method === "upi";
         return (
           <div className="flex justify-end gap-1">
-            {/* Pending -> edit (record cash). Paid -> refund. */}
+            {/* UPI -> open the verification panel; COD pending -> record cash;
+                settled -> refund. */}
             {settled ? (
               <button type="button" disabled={busy}
                 onClick={() => {
@@ -368,6 +436,13 @@ export default function PaymentsPage() {
                 className="rounded p-1.5 text-amber-600 hover:bg-amber-50 disabled:opacity-40">
                 <RotateCcw className="h-4 w-4" aria-hidden="true" />
                 <span className="sr-only">Refund {row.payment_number}</span>
+              </button>
+            ) : isUpi ? (
+              <button type="button" disabled={busy} onClick={() => setReview(row)}
+                title="Verify this UPI payment"
+                className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                <Check className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only">Verify {row.payment_number}</span>
               </button>
             ) : (
               <button type="button" disabled={busy} onClick={() => openCollect(row)}
@@ -392,7 +467,9 @@ export default function PaymentsPage() {
     <div className="space-y-3">
       <div>
         <h1 className="page-title">Payments</h1>
-        <p className="mt-0.5 text-xs text-slate-500">Record cash received on delivery, track what is outstanding, issue refunds.</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Verify UPI references against the bank statement, record cash received on delivery, issue refunds.
+        </p>
       </div>
 
       {statsLoading && !stats ? (
@@ -408,9 +485,9 @@ export default function PaymentsPage() {
             tone="amber"
           />
           <StatCard
-            label="Payment method"
-            value="COD"
-            sublabel={`${stats.cod_payments} of ${stats.total_payments} · ${stats.rejected} rejected`}
+            label="Payment methods"
+            value={`${stats.cod_payments} COD · ${stats.upi_payments} UPI`}
+            sublabel={`${stats.total_payments} payments · ${stats.rejected} rejected`}
             tone="violet"
           />
         </div>
@@ -481,6 +558,71 @@ export default function PaymentsPage() {
             ))}
           </ul>
         )
+      ) : tab === "verify" ? (
+        upiLoading ? (
+          <div className="space-y-2">{[0, 1].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-white" />)}</div>
+        ) : !upiQueue.length ? (
+          <div className="card p-8 text-center">
+            <Check className="mx-auto h-8 w-8 text-emerald-500" aria-hidden="true" />
+            <p className="mt-2 text-sm font-bold text-slate-800">No UPI payments to verify</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Submitted references show up here for approval against the bank statement.
+            </p>
+          </div>
+        ) : (
+          <ul className="grid gap-3 md:grid-cols-2">
+            {upiQueue.map((payment) => {
+              const submitted = Boolean(payment.transaction_id);
+              return (
+                <li key={payment.id} className="card overflow-hidden">
+                  <div className={`flex items-start justify-between gap-2 border-b px-3 py-2 ${submitted ? "border-sky-100 bg-sky-50" : "border-amber-100 bg-amber-50"}`}>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">{payment.order_number}</p>
+                      <p className="text-[11px] text-slate-600">{payment.customer_name} · {payment.customer_mobile}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-base font-extrabold text-slate-900">{formatMoney(payment.amount)}</p>
+                      <p className="text-[10px] font-semibold uppercase text-slate-500">
+                        {submitted ? "Reference submitted" : "Awaiting customer"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[88px_1fr] gap-3 p-3">
+                    {payment.proof_url ? (
+                      <a href={payment.proof_url} target="_blank" rel="noreferrer" className="block">
+                        <img src={payment.proof_url} alt="Payment proof" className="h-[88px] w-[88px] rounded-lg border border-slate-200 object-cover" />
+                      </a>
+                    ) : (
+                      <div className="grid h-[88px] w-[88px] place-items-center rounded-lg bg-slate-100 text-[10px] text-slate-400">No image</div>
+                    )}
+                    <div className="min-w-0 text-xs">
+                      <p className="text-slate-500">UPI reference</p>
+                      <p className="truncate font-mono font-semibold text-slate-900">{payment.transaction_id || "—"}</p>
+                      <p className="mt-1 text-slate-500">Payer</p>
+                      <p className="truncate font-medium text-slate-800">
+                        {payment.payer_name || "—"}{payment.upi_id ? ` · ${payment.upi_id}` : ""}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        {submitted
+                          ? `Submitted ${timeAgo(payment.payment_proof_uploaded_at || payment.updated_at)}`
+                          : `Order placed ${timeAgo(payment.created_at)}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 border-t border-slate-100 p-2.5">
+                    <Button size="xs" variant="outline" className="flex-1" onClick={() => setReview(payment)}
+                      leftIcon={<Eye className="h-3.5 w-3.5" />}>Review</Button>
+                    <Button size="xs" variant="success" className="flex-1" loading={busy} disabled={!submitted}
+                      title={submitted ? "Match the reference against your bank statement, then confirm" : "The customer has not submitted a transaction ID yet"}
+                      onClick={() => approve(payment)} leftIcon={<Check className="h-3.5 w-3.5" />}>Confirm UPI payment</Button>
+                    <Button size="xs" variant="danger" disabled={!submitted}
+                      onClick={() => { setRejectOpen(payment); setReason(""); }} leftIcon={<X className="h-3.5 w-3.5" />}>Reject</Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )
       ) : (
         <>
           <TableToolbar
@@ -492,7 +634,11 @@ export default function PaymentsPage() {
             filters={
               <>
                 <Select aria-label="Filter by method" value={list.filters.method || ""} onChange={(e) => list.setFilter("method", e.target.value)}
-                  options={[{ value: "", label: "Any method" }, { value: "cod", label: "Cash on delivery" }]}
+                  options={[
+                    { value: "", label: "Any method" },
+                    { value: "cod", label: "Cash on delivery" },
+                    { value: "upi", label: "UPI" },
+                  ]}
                   containerClassName="w-36" className="h-9" />
                 <Select aria-label="Filter by status" value={list.filters.status || ""} onChange={(e) => list.setFilter("status", e.target.value)}
                   options={[{ value: "", label: "Any status" }, ...PAYMENT_STATUSES]}
@@ -533,9 +679,9 @@ export default function PaymentsPage() {
                 ["Customer", `${review.customer_name} · ${review.customer_mobile}`],
                 ["Amount", formatMoney(review.amount)],
                 ["Method", review.method_display || titleCase(review.method)],
-                ["UPI reference", review.upi_transaction_reference || "—"],
+                ["UPI reference", review.transaction_id || "—"],
                 ["Payer name", review.payer_name || "—"],
-                ["Payer UPI ID", review.payer_upi_id || "—"],
+                ["Payer UPI ID", review.upi_id || "—"],
                 ["Attempts", String(review.verification_attempts ?? 0)],
               ].map(([k, v]) => (
                 <div key={k} className="rounded-lg bg-slate-50 px-3 py-2">
