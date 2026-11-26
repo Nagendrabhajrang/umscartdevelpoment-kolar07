@@ -193,6 +193,16 @@ class StoreSettings {
   }
 
   bool get storeOpen => json['is_store_open'] != false;
+
+  // ---- payment options, exactly as the admin dashboard sets them ----------
+  bool get codEnabled => json['cod_enabled'] != false;
+  bool get upiEnabled => json['upi_enabled'] == true;
+  String get upiId => _s(json['upi_id']);
+  String get upiPayeeName => _s(json['upi_payee_name'], name);
+  String get upiQrUrl => _s(json['upi_qr_image_url']);
+
+  /// UPI can only be offered when the admin left it on and there is an ID.
+  bool get canPayByUpi => upiEnabled && upiId.isNotEmpty;
 }
 
 class Address {
@@ -263,6 +273,30 @@ class Order {
 
   String get paymentLabel =>
       _s(json['payment_method_display'], 'Cash on delivery');
+  String get paymentMethodKey => _s(json['payment_method'], 'cod');
+  bool get isUpi => paymentMethodKey == 'upi';
+
+  /// The payment row this order settles against. Needed to attach the UPI
+  /// reference; null for orders created before the payment existed.
+  int? get paymentId {
+    final raw = json['payment_id'];
+    if (raw == null || raw == '') return null;
+    return _i(raw);
+  }
+
+  /// A UPI order still waiting for its transaction ID.
+  bool get needsUpiReference {
+    if (!isUpi) return false;
+    final status = _s(json['payment_status_code'],
+        _s(json['payment_status'], '')).toLowerCase();
+    return !{
+      'paid',
+      'approved',
+      'verified',
+      'refunded',
+      'cancelled',
+    }.contains(status);
+  }
   String get paymentStatus =>
       _s(json['payment_status_display'], json['is_paid'] == true ? 'Paid' : '');
 

@@ -424,6 +424,10 @@ class _OrderScreenState extends State<OrderScreen> {
                   _items(o),
                   const SizedBox(height: 14),
                   _bill(o),
+                  if (o.isUpi) ...[
+                    const SizedBox(height: 14),
+                    _upi(o),
+                  ],
                   const SizedBox(height: 14),
                   _delivery(o),
                   if (o.canCancel) ...[
@@ -671,6 +675,147 @@ class _OrderScreenState extends State<OrderScreen> {
               color: C.muted,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /*
+   * How the UPI payment stands. No button to enter a transaction ID: the
+   * reference is given in the popup before the order is placed, so this is a
+   * status card, not an action.
+   */
+  Widget _upi(Order o) {
+    final store = app.settings;
+    final qr = mediaUrl(store.upiQrUrl);
+    final waiting = o.needsUpiReference;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: cardBox(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                radius: 18,
+                backgroundColor: C.brandSoft,
+                child: Icon(Icons.qr_code_2_rounded, color: C.brand, size: 20),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Pay by UPI',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: C.ink,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: waiting ? C.amberSoft : C.brandSoft,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  o.paymentStatus.isEmpty ? 'Payment' : o.paymentStatus,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: waiting ? C.amber : C.brandDark,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            waiting
+                ? 'We have your reference. The store verifies it against the '
+                    'bank statement, usually within a few minutes.'
+                : 'Payment received for this order.',
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+              color: C.muted,
+            ),
+          ),
+          if (qr.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: C.line),
+                  ),
+                  child: Image.network(
+                    qr,
+                    width: 86,
+                    height: 86,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      width: 86,
+                      height: 86,
+                      child: Icon(Icons.qr_code_2_rounded,
+                          size: 40, color: C.muted),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'UPI ID',
+                        style: TextStyle(
+                          fontSize: 10,
+                          letterSpacing: 0.5,
+                          fontWeight: FontWeight.w900,
+                          color: C.muted,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          store.upiId,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: C.ink,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Note: ${o.number}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: C.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

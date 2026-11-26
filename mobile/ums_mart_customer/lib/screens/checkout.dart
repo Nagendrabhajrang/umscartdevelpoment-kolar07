@@ -9,6 +9,7 @@ import '../models.dart';
 import '../store.dart';
 import '../ui.dart';
 import 'orders.dart';
+import 'upi.dart';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -26,10 +27,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _placing = false;
   String? _error;
 
+  /*
+   * Payment method, and - when UPI is chosen - the reference the customer typed
+   * into the popup. The QR is never drawn on this screen: choosing UPI opens the
+   * popup, and a UPI order is not created until a transaction ID is in hand.
+   */
+  String _method = 'cod';
+  UpiReference? _upiRef;
+
   @override
   void initState() {
     super.initState();
     _bill = app.bill;
+    if (!app.settings.codEnabled) _method = 'upi';
     _load();
   }
 
@@ -76,7 +86,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final id = _selected;
     if (id == null) return;
     try {
-      final bill = await Api.checkoutPreview(addressId: id);
+      final bill =
+          await Api.checkoutPreview(addressId: id, paymentMethod: _method);
       if (mounted && _selected == id) setState(() => _bill = bill);
     } catch (_) {
       // The cart's own bill stays on screen.
@@ -90,15 +101,83 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await _load();
   }
 
+  /// Opens the UPI popup and keeps what the customer typed.
+  Future<void> _collectUpi() async {
+    final store = app.settings;
+    final got = await showUpiSheet(
+      context,
+      upiId: store.upiId,
+      payeeName: store.upiPayeeName,
+      qrUrl: store.upiQrUrl,
+      amount: _bill?.total ?? 0,
+      note: 'Use your order number as the payment note.',
+      initial: _upiRef,
+    );
+    if (got != null && mounted) setState(() => _upiRef = got);
+  }
+
+  /// Sends the reference to the payment that now exists. If it fails the popup
+  /// comes back as a blocking step - the order exists, so it must not be left
+  /// looking paid without one.
+  Future<void> _saveProof(Order order) async {
+    final paymentId = order.paymentId;
+    var ref = _upiRef;
+    if (paymentId == null || ref == null) return;
+    var error = '';
+    while (true) {
+      try {
+        await Api.submitUpiProof(
+          paymentId,
+          reference: ref!.reference,
+          payerMobile: ref.mobile,
+        );
+        return;
+      } catch (e) {
+        error = errorText(e);
+        if (!mounted) return;
+        final store = app.settings;
+        final again = await showUpiSheet(
+          context,
+          upiId: store.upiId,
+          payeeName: store.upiPayeeName,
+          qrUrl: store.upiQrUrl,
+          amount: order.total,
+          note: 'Payment note: ${order.number}',
+          initial: ref,
+          blocking: true,
+          buttonLabel: 'Save & view my order',
+          error: error,
+        );
+        if (again == null) return;
+        ref = again;
+        _upiRef = again;
+      }
+    }
+  }
+
   Future<void> _place() async {
     final id = _selected;
     if (id == null) {
       toast(context, 'Please add a delivery address');
       return;
     }
+    /*
+     * No reference, no order: a UPI order the store cannot match to a payment is
+     * exactly the order that gets abandoned. The popup is the way forward.
+     */
+    if (_method == 'upi' && _upiRef == null) {
+      await _collectUpi();
+      return;
+    }
+
     setState(() => _placing = true);
     try {
-      final order = await Api.checkout(addressId: id, notes: _notes.text.trim());
+      final order = await Api.checkout(
+        addressId: id,
+        notes: _notes.text.trim(),
+        paymentMethod: _method,
+      );
+      if (order.isUpi) await _saveProof(order);
       await app.refreshCart();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
@@ -188,48 +267,83 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       ),
                     ),
                     _heading('2', 'Payment'),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: C.brand, width: 1.4),
+                    if (app.settings.codEnabled)
+                      _payTile(
+                        selected: _method == 'cod',
+                        icon: Icons.payments_rounded,
+                        title: 'Cash on delivery',
+                        subtitle: bill == null
+                            ? 'Pay when your order arrives'
+                            : 'Pay ${money(bill.total)} when your order arrives',
+                        onTap: () => setState(() => _method = 'cod'),
                       ),
-                      child: const Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 21,
-                            backgroundColor: C.brandSoft,
-                            child: Icon(Icons.payments_rounded, color: C.brand),
-                          ),
-                          SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Cash on delivery',
-                                  style: TextStyle(
-                                    fontSize: 14.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: C.ink,
-                                  ),
-                                ),
-                                Text(
-                                  'Pay when your order arrives',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: C.muted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Icon(Icons.check_circle_rounded, color: C.brand),
-                        ],
+                    if (app.settings.canPayByUpi) ...[
+                      const SizedBox(height: 10),
+                      _payTile(
+                        selected: _method == 'upi',
+                        icon: Icons.qr_code_2_rounded,
+                        title: 'UPI — pay now',
+                        subtitle: app.settings.upiId,
+                        onTap: () async {
+                          setState(() => _method = 'upi');
+                          if (_upiRef == null) await _collectUpi();
+                        },
                       ),
-                    ),
+                      /*
+                       * No QR here - it lives in the popup. This is only the
+                       * receipt line, with one way back into the popup.
+                       */
+                      if (_method == 'upi')
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+                          decoration: BoxDecoration(
+                            color: C.brandSoft,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: C.line),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _upiRef == null
+                                          ? 'UPI REFERENCE NEEDED'
+                                          : 'UPI REFERENCE RECORDED',
+                                      style: const TextStyle(
+                                        fontSize: 9.5,
+                                        letterSpacing: 0.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: C.brandDark,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _upiRef == null
+                                          ? 'Pay with any UPI app, then enter the transaction ID.'
+                                          : '${_upiRef!.reference}${_upiRef!.mobile.isEmpty ? '' : ' · ${_upiRef!.mobile}'}',
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: C.ink,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: _collectUpi,
+                                child: Text(_upiRef == null ? 'Enter ID' : 'Change'),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                     _heading('3', 'Note for the delivery person'),
                     TextField(
                       controller: _notes,
@@ -284,6 +398,72 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
               ),
             ),
+    );
+  }
+
+  Widget _payTile({
+    required bool selected,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? C.brand : C.line,
+            width: selected ? 1.4 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 21,
+              backgroundColor: selected ? C.brandSoft : const Color(0xFFF3F4F6),
+              child: Icon(icon, color: selected ? C.brand : C.muted),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      color: C.ink,
+                    ),
+                  ),
+                  if (subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: C.muted,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Icon(
+              selected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
+              color: selected ? C.brand : C.muted,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -692,7 +872,7 @@ class OrderPlacedScreen extends StatelessWidget {
               Text(
                 'We are getting it ready. It will reach you in about '
                 '${app.settings.etaMinutes} minutes.\n'
-                'Pay ${money(order.total)} in cash on delivery.',
+                '${order.isUpi ? 'Your UPI payment is with the store for verification.' : 'Pay ${money(order.total)} in cash on delivery.'}',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 14,

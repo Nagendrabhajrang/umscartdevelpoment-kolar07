@@ -442,10 +442,13 @@ class Api {
     await _post('/api/v1/orders/$id/cancel/', {'reason': reason, 'note': note});
   }
 
-  static Future<Bill> checkoutPreview({required int addressId}) async {
+  static Future<Bill> checkoutPreview({
+    required int addressId,
+    String paymentMethod = 'cod',
+  }) async {
     final data = await _post('/api/v1/orders/checkout/preview/', {
       'address': addressId,
-      'payment_method': 'cod',
+      'payment_method': paymentMethod,
     });
     return Bill(asJson(data));
   }
@@ -453,13 +456,27 @@ class Api {
   static Future<Order> checkout({
     required int addressId,
     String notes = '',
+    String paymentMethod = 'cod',
   }) async {
     final data = await _post('/api/v1/orders/checkout/', {
       'address': addressId,
-      'payment_method': 'cod',
+      'payment_method': paymentMethod,
       if (notes.isNotEmpty) 'customer_notes': notes,
     });
     return Order(asJson(data));
+  }
+
+  /// Attach the UPI transaction ID to the payment of an order that already
+  /// exists. Same endpoint the web storefront uses.
+  static Future<Json> submitUpiProof(
+    int paymentId, {
+    required String reference,
+    String payerMobile = '',
+  }) async {
+    return asJson(await _post('/api/v1/payments/$paymentId/submit-proof/', {
+      'transaction_reference': reference,
+      if (payerMobile.isNotEmpty) 'payer_mobile': payerMobile,
+    }));
   }
 
   // -------------------------------------------------------------- addresses
